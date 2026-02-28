@@ -4,10 +4,17 @@ import { SendOtpDto } from './dto/sendOtp.dto';
 import { VerifyOtpDto } from './dto/verifyOtp.dto';
 import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
+import { Get, UseGuards, Req } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
 
 @Controller('auth')
 export class AuthController {
 	constructor(private readonly authService: AuthService) {}
+	@UseGuards(AuthGuard('jwt'))
+	@Get('me')
+	async getMyProfile(@Req() req) {
+		return req.user;
+	}
 
 	@Post('send-otp')
 	sendOtp(@Body() dto: SendOtpDto) {
@@ -27,5 +34,10 @@ export class AuthController {
 	@Post('login')
 	login(@Body() dto: LoginDto) {
 		return this.authService.login(dto);
+	}
+
+	@Post('logout')
+	logout(@Body('userId') userId: string) {
+		return this.authService.logout(userId);
 	}
 }
