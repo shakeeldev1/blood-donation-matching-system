@@ -10,26 +10,96 @@ import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
+import { MailModuleService } from 'src/mail-module/mail-module.service';
 
 @Injectable()
 export class AuthService {
+  private otpStore = new Map<
+    string,
+    { otp: string; expiresAt: number; isVerified: boolean }
+  >();
+
   constructor(
     private userService: UserService,
     private jwtService: JwtService,
     private configService: ConfigService,
+    private mailModuleService: MailModuleService,
   ) {}
+
+  // ================= OTP =================
+  async sendOtp(email: string) {
+    const normalizedEmail = email.toLowerCase();
+    const existingUser = await this.userService.findByEmail(normalizedEmail);
+    if (existingUser) {
+      throw new BadRequestException('Email already in use');
+    }
+
+    const otp = this.generateOtp();
+    const expiresAt = Date.now() + 5 * 60 * 1000;
+
+    this.otpStore.set(normalizedEmail, {
+      otp,
+      expiresAt,
+      isVerified: false,
+    });
+
+    await this.mailModuleService.sendOtpEmail(normalizedEmail, otp);
+    return { message: 'OTP sent to email' };
+  }
+
+  async verifyOtp(email: string, otp: string) {
+    const normalizedEmail = email.toLowerCase();
+    const otpRecord = this.otpStore.get(normalizedEmail);
+
+    if (!otpRecord) {
+      throw new BadRequestException('OTP not found. Please request a new one');
+    }
+
+    if (Date.now() > otpRecord.expiresAt) {
+      this.otpStore.delete(normalizedEmail);
+      throw new BadRequestException('OTP expired. Please request a new one');
+    }
+
+    if (otpRecord.otp !== otp) {
+      throw new BadRequestException('Invalid OTP');
+    }
+
+    this.otpStore.set(normalizedEmail, {
+      ...otpRecord,
+      isVerified: true,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+
+    return { message: 'Email verified successfully' };
+  }
 
   // ================= SIGNUP =================
   async signup(dto: SignupDto) {
-    const existingUser = await this.userService.findByEmail(dto.email);
+    const normalizedEmail = dto.email.toLowerCase();
+    const otpRecord = this.otpStore.get(normalizedEmail);
+
+    if (!otpRecord || !otpRecord.isVerified) {
+      throw new BadRequestException('Please verify your email with OTP first');
+    }
+
+    if (Date.now() > otpRecord.expiresAt) {
+      this.otpStore.delete(normalizedEmail);
+      throw new BadRequestException(
+        'Email verification expired. Please verify again',
+      );
+    }
+
+    const existingUser = await this.userService.findByEmail(normalizedEmail);
     if (existingUser) {
       throw new BadRequestException('Email already in use');
     }
     const hashedPassword = await bcrypt.hash(dto.password, 10);
     const user = await this.userService.createUser({
-      email: dto.email,
+      name: dto.name,
+      email: normalizedEmail,
       password: hashedPassword,
     });
+    this.otpStore.delete(normalizedEmail);
     const tokens = await this.generateTokens(user._id.toString());
     await this.storeRefreshToken(user._id.toString(), tokens.refresh_token);
     return tokens;
@@ -93,5 +163,9 @@ export class AuthService {
   private async storeRefreshToken(userId: string, refreshToken: string) {
     const hashed = await bcrypt.hash(refreshToken, 10);
     await this.userService.updateRefreshToken(userId, hashed);
+  }
+
+  private generateOtp() {
+    return Math.floor(100000 + Math.random() * 900000).toString();
   }
 }
