@@ -5,28 +5,23 @@ import { Model } from 'mongoose';
 
 @Injectable()
 export class UserService {
-    constructor(@InjectModel(User.name) private userModel:Model<User>){}
+    constructor(@InjectModel(User.name) private userModel: Model<User>) { }
 
-    createUser(data:Partial<User>){
+    createUser(data: Partial<User>) {
         return this.userModel.create(data);
     }
 
-    findByEmail(email:string){
-        return this.userModel.findOne({email});
+    findByEmail(email: string) {
+        return this.userModel.findOne({ email });
     }
 
-    findById(id:string){
+    findById(id: string) {
         return this.userModel.findById(id);
     }
 
-    async hashPassword(password:string){
-        const bcrypt = await import('bcrypt');
-        const salt = await bcrypt.genSalt(10);
-        return bcrypt.hash(password, salt);
-    }
-
-    async comparePassword(password:string, hash:string){
-        const bcrypt = await import('bcrypt');
-        return bcrypt.compare(password, hash);
+    async updateRefreshToken(userId: string, hashedToken: string | null) {
+        return this.userModel.findByIdAndUpdate(userId, {
+            refreshToken: hashedToken,
+        });
     }
 }
