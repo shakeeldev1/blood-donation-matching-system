@@ -4,6 +4,7 @@ import { SendOtpDto } from './dto/sendOtp.dto';
 import { VerifyOtpDto } from './dto/verifyOtp.dto';
 import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
+import { RefreshTokenDto } from './dto/refreshToken.dto';
 import { Get, UseGuards, Req } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 
@@ -34,6 +35,11 @@ export class AuthController {
 	@Post('login')
 	login(@Body() dto: LoginDto) {
 		return this.authService.login(dto);
+	}
+
+	@Post('refresh')
+	refresh(@Body() dto: RefreshTokenDto) {
+		return this.authService.refreshTokens(dto.userId, dto.refreshToken);
 	}
 
 	@Post('logout')
