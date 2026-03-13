@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Param,
   Patch,
   Post,
   Req,
@@ -9,8 +10,10 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { DonorService } from './donor.service';
+import { CreateAppointmentDto } from './dto/create-appointment.dto';
 import { CreateDonorDto } from './dto/create-donor.dto';
 import { UpdateDonorDto } from './dto/update-donor.dto';
+import { UpdateNotificationSettingsDto } from './dto/update-notification-settings.dto';
 
 interface JwtUser {
   sub: string;
@@ -38,6 +41,60 @@ export class DonorController {
   @Get('me')
   getMyProfile(@Req() req: AuthRequest) {
     return this.donorService.findByUserId(req.user.sub);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Get('dashboard')
+  getDashboard(@Req() req: AuthRequest) {
+    return this.donorService.getDashboard(req.user);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Get('appointments')
+  getAppointments(@Req() req: AuthRequest) {
+    return this.donorService.getAppointments(req.user.sub);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Post('appointments')
+  createAppointment(@Req() req: AuthRequest, @Body() dto: CreateAppointmentDto) {
+    return this.donorService.createAppointment(req.user.sub, dto);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Patch('appointments/:appointmentId/cancel')
+  cancelAppointment(
+    @Req() req: AuthRequest,
+    @Param('appointmentId') appointmentId: string,
+  ) {
+    return this.donorService.cancelAppointment(req.user.sub, appointmentId);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Get('history')
+  getHistory(@Req() req: AuthRequest) {
+    return this.donorService.getHistory(req.user.sub);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Get('requests')
+  getRequests(@Req() req: AuthRequest) {
+    return this.donorService.getRequests(req.user.sub);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Get('settings')
+  getSettings(@Req() req: AuthRequest) {
+    return this.donorService.getSettings(req.user);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Patch('settings')
+  updateSettings(
+    @Req() req: AuthRequest,
+    @Body() dto: UpdateNotificationSettingsDto,
+  ) {
+    return this.donorService.updateSettings(req.user.sub, dto);
   }
 
   // Protected — registers the authenticated user as a donor

@@ -60,6 +60,27 @@ export class Donor extends Document {
 
   @Prop()
   image?: string;
+
+  @Prop({
+    type: {
+      email: { type: Boolean, default: true },
+      sms: { type: Boolean, default: false },
+      urgentAlerts: { type: Boolean, default: true },
+      promotions: { type: Boolean, default: false },
+    },
+    default: {
+      email: true,
+      sms: false,
+      urgentAlerts: true,
+      promotions: false,
+    },
+  })
+  notificationSettings!: {
+    email: boolean;
+    sms: boolean;
+    urgentAlerts: boolean;
+    promotions: boolean;
+  };
 }
 
 export const DonorSchema = SchemaFactory.createForClass(Donor);
