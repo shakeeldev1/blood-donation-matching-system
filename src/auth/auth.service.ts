@@ -148,12 +148,26 @@ export class AuthService {
 
   private async generateTokens(userId: string) {
     const payload = { sub: userId };
+
+    const accessSecret =
+      this.configService.get<string>('JWT_SECRET') ??
+      this.configService.get<string>('ACCESS_TOKEN_SECRET');
+    const refreshSecret =
+      this.configService.get<string>('JWT_REFRESH_SECRET') ??
+      this.configService.get<string>('REFRESH_TOKEN_SECRET');
+
+    if (!accessSecret || !refreshSecret) {
+      throw new UnauthorizedException(
+        'Token secrets are not configured. Set JWT_SECRET/ACCESS_TOKEN_SECRET and JWT_REFRESH_SECRET/REFRESH_TOKEN_SECRET.',
+      );
+    }
+
     const access_token = this.jwtService.sign(payload, {
-      secret: this.configService.get<string>('JWT_SECRET'),
+      secret: accessSecret,
       expiresIn: '15m',
     });
     const refresh_token = this.jwtService.sign(payload, {
-      secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
+      secret: refreshSecret,
       expiresIn: '7d',
     });
 

@@ -1,5 +1,5 @@
 // mail.service.ts
-import { Injectable } from '@nestjs/common';
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { ConfigService } from '@nestjs/config';
 
@@ -8,13 +8,24 @@ export class MailModuleService {
     private transporter: nodemailer.Transporter;
 
     constructor(private configService: ConfigService) {
+    const host = this.configService.get<string>('MAIL_HOST');
+    const port = Number(this.configService.get<string>('MAIL_PORT'));
+    const user = this.configService.get<string>('MAIL_USER');
+    const pass = this.configService.get<string>('MAIL_PASS');
+
+    if (!host || !port || !user || !pass) {
+      throw new Error(
+        'Mail config missing. Set MAIL_HOST, MAIL_PORT, MAIL_USER, MAIL_PASS in server/.env',
+      );
+    }
+
         this.transporter = nodemailer.createTransport({
-            host: this.configService.get('MAIL_HOST'),
-            port: Number(this.configService.get('MAIL_PORT')),
+      host,
+      port,
             secure: false,
             auth: {
-                user: this.configService.get('MAIL_USER'),
-                pass: this.configService.get('MAIL_PASS'),
+        user,
+        pass,
             },
         });
     }
@@ -23,7 +34,8 @@ export class MailModuleService {
         const appName = 'Blood Donation System';
         const supportEmail = this.configService.get('MAIL_USER');
 
-        await this.transporter.sendMail({
+        try {
+          await this.transporter.sendMail({
             from: `"${appName}" <${supportEmail}>`,
             to,
             subject: 'Verify Your Email Address',
@@ -71,5 +83,10 @@ export class MailModuleService {
     </div>
     `,
         });
+      } catch {
+        throw new InternalServerErrorException(
+          'Failed to send OTP email. Check SMTP settings in server/.env',
+        );
+      }
     }
 }
