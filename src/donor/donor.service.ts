@@ -1,16 +1,23 @@
 import {
+  BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
+import { createHash } from 'crypto';
 import { Model, Types } from 'mongoose';
 import { Donor } from './schemas/donor.schema';
 import { DonorAppointment } from './schemas/donor-appointment.schema';
 import { BloodRequest } from './schemas/blood-request.schema';
+import { MailModuleService } from '../mail-module/mail-module.service';
 import { CreateDonorDto } from './dto/create-donor.dto';
 import { UpdateDonorDto } from './dto/update-donor.dto';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
+import { CreateBloodRequestDto } from './dto/create-blood-request.dto';
 import { UpdateNotificationSettingsDto } from './dto/update-notification-settings.dto';
 import type {
   DashboardActivityItem,
@@ -42,6 +49,8 @@ export class DonorService {
     private appointmentModel: Model<DonorAppointment>,
     @InjectModel(BloodRequest.name)
     private bloodRequestModel: Model<BloodRequest>,
+    private readonly configService: ConfigService,
+    private readonly mailService: MailModuleService,
   ) {}
 
   private readonly seedHospitals = [
@@ -51,6 +60,35 @@ export class DonorService {
     'Metro Care Center',
     'Community Blood Bank',
   ];
+
+  getCloudinaryUploadSignature() {
+    const cloudName = this.configService.get<string>('CLOUDINARY_CLOUD_NAME');
+    const apiKey = this.configService.get<string>('CLOUDINARY_API_KEY');
+    const apiSecret = this.configService.get<string>('CLOUDINARY_API_SECRET');
+    const folder =
+      this.configService.get<string>('CLOUDINARY_FOLDER') ??
+      'blood-donor-profiles';
+
+    if (!cloudName || !apiKey || !apiSecret) {
+      throw new InternalServerErrorException(
+        'Cloudinary server configuration is incomplete',
+      );
+    }
+
+    const timestamp = Math.floor(Date.now() / 1000);
+    const paramsToSign = `folder=${folder}&timestamp=${timestamp}`;
+    const signature = createHash('sha1')
+      .update(`${paramsToSign}${apiSecret}`)
+      .digest('hex');
+
+    return {
+      cloudName,
+      apiKey,
+      folder,
+      timestamp,
+      signature,
+    };
+  }
 
   async create(
     userId: string,
@@ -338,14 +376,37 @@ export class DonorService {
       .lean()
       .exec()) as Donor | null;
 
+    const myRequests = await this.bloodRequestModel
+      .find({ requesterUserId: userId })
+      .sort({ createdAt: -1 })
+      .limit(12)
+      .lean()
+      .exec();
+
     if (!donor) {
       return {
         stats: [
           { label: 'Critical Needs', value: 0, badge: { text: 'Urgent', type: 'error' } },
           { label: 'Nearby Requests', value: 0, subtext: 'Complete profile first' },
-          { label: 'Matched Units', value: 0, subtext: 'Total units needed' },
+          { label: 'My Requests', value: myRequests.length, subtext: 'Requests posted by you' },
         ],
         requests: [],
+        myRequests: myRequests.map((request, index) => ({
+          requestId: String((request as { _id: Types.ObjectId })._id),
+          id: index + 1,
+          patientName: request.patientName,
+          hospital: request.hospital,
+          location: request.location,
+          bloodGroup: request.bloodGroup,
+          units: Math.max(1, Number(request.units ?? 1)),
+          urgency: request.urgency,
+          postedTime: this.formatPostedTime(
+            (request as { createdAt?: Date }).createdAt,
+          ),
+          distance: `${Number(request.distanceKm ?? 0).toFixed(1)} km`,
+          contact: request.contact,
+          status: request.status ?? 'Pending',
+        })),
       };
     }
 
@@ -364,12 +425,13 @@ export class DonorService {
           subtext: `Within ${donor.city}`,
         },
         {
-          label: 'Matched Units',
-          value: matchedRequests.reduce((sum, request) => sum + Math.max(1, Number(request.units ?? 1)), 0),
-          subtext: 'Total units needed',
+          label: 'My Requests',
+          value: myRequests.length,
+          subtext: 'Requests posted by you',
         },
       ],
       requests: matchedRequests.map((request) => ({
+        requestId: request.requestId,
         id: request.id,
         patientName: request.patientName,
         hospital: request.hospital,
@@ -380,8 +442,125 @@ export class DonorService {
         postedTime: this.formatPostedTime(request.createdAt),
         distance: request.distance,
         contact: request.contact,
+        status: request.status,
+      })),
+      myRequests: myRequests.map((request, index) => ({
+        requestId: String((request as { _id: Types.ObjectId })._id),
+        id: index + 1,
+        patientName: request.patientName,
+        hospital: request.hospital,
+        location: request.location,
+        bloodGroup: request.bloodGroup,
+        units: Math.max(1, Number(request.units ?? 1)),
+        urgency: request.urgency,
+        postedTime: this.formatPostedTime(
+          (request as { createdAt?: Date }).createdAt,
+        ),
+        distance: `${Number(request.distanceKm ?? 0).toFixed(1)} km`,
+        contact: request.contact,
+        status: request.status ?? 'Pending',
       })),
     };
+  }
+
+  async createRequest(
+    user: { sub: string; name: string; email: string },
+    dto: CreateBloodRequestDto,
+  ) {
+    const donor = (await this.donorModel
+      .findOne({ userId: new Types.ObjectId(user.sub) })
+      .lean()
+      .exec()) as Donor | null;
+
+    const created = await this.bloodRequestModel.create({
+      requesterUserId: user.sub,
+      requesterName: user.name,
+      requesterEmail: user.email,
+      patientName: dto.patientName?.trim() || user.name,
+      hospital: dto.hospital,
+      location: dto.location,
+      city: dto.city || donor?.city || 'Unknown',
+      bloodGroup: dto.bloodGroup,
+      units: Math.max(1, Number(dto.units ?? 1)),
+      urgency: dto.urgency ?? 'High',
+      contact: dto.contact,
+      distanceKm: Number(dto.distanceKm ?? 1.5),
+      status: 'Pending',
+    });
+
+    // Send confirmation email (fire-and-forget)
+    this.mailService
+      .sendBloodRequestCreatedEmail(user.email, {
+        requesterName: user.name,
+        patientName: created.patientName,
+        bloodGroup: created.bloodGroup,
+        units: created.units,
+        urgency: created.urgency,
+        hospital: created.hospital,
+        city: created.city,
+        contact: created.contact,
+        requestId: String((created as unknown as { _id: Types.ObjectId })._id),
+      })
+      .catch(() => { /* non-blocking */ });
+
+    return created;
+  }
+
+  async updateRequestStatus(
+    user: { sub: string; name: string; email: string },
+    requestId: string,
+    status: 'Pending' | 'Accepted' | 'Fulfilled' | 'Closed',
+  ) {
+    const request = await this.bloodRequestModel.findById(requestId).lean().exec();
+
+    if (!request) {
+      throw new NotFoundException('Request not found');
+    }
+
+    const isOwner = request.requesterUserId === user.sub;
+    const ownerAllowed = ['Closed', 'Fulfilled', 'Pending'];
+    const responderAllowed = ['Accepted', 'Fulfilled'];
+
+    if (isOwner && !ownerAllowed.includes(status)) {
+      throw new BadRequestException('Owners can set Pending, Fulfilled, or Closed');
+    }
+
+    if (!isOwner && !responderAllowed.includes(status)) {
+      throw new ForbiddenException('Only request owner can apply this status');
+    }
+
+    const updated = await this.bloodRequestModel
+      .findByIdAndUpdate(requestId, { $set: { status } }, { new: true })
+      .lean()
+      .exec();
+
+    if (!updated) {
+      throw new NotFoundException('Request not found');
+    }
+
+    const result = {
+      requestId: String((updated as { _id: Types.ObjectId })._id),
+      status: updated.status,
+      updatedAt: (updated as { updatedAt?: Date }).updatedAt,
+    };
+
+    // Notify the requester about the status change (fire-and-forget)
+    const recipientEmail = updated.requesterEmail;
+    if (recipientEmail) {
+      this.mailService
+        .sendBloodRequestStatusUpdatedEmail(recipientEmail, {
+          requesterName: updated.requesterName ?? 'User',
+          patientName: updated.patientName,
+          bloodGroup: updated.bloodGroup,
+          hospital: updated.hospital,
+          status: updated.status,
+          updatedByName: user.name,
+          requestId: result.requestId,
+        })
+        .catch(() => { /* non-blocking */ });
+    }
+
+    return result;
   }
 
   async getSettings(user: { sub: string; name: string; email: string }): Promise<DonorSettingsResponse> {
@@ -477,10 +656,12 @@ export class DonorService {
   ): Promise<
     Array<
       DashboardRequestItem & {
+        requestId: string;
         patientName: string;
         units: number;
         createdAt?: Date;
         contact: string;
+        status: 'Pending' | 'Accepted' | 'Fulfilled' | 'Closed';
       }
     >
   > {
@@ -514,6 +695,7 @@ export class DonorService {
     const requests = docs.length > 0 ? docs : fallbackDocs;
 
     return requests.map((request, index) => ({
+      requestId: String((request as { _id: Types.ObjectId })._id),
       id: index + 1,
       hospital: request.hospital,
       location: `${request.city} • ${request.location}`,
@@ -524,6 +706,7 @@ export class DonorService {
       units: Math.max(1, Number(request.units ?? 1)),
       createdAt: (request as { createdAt?: Date }).createdAt,
       contact: request.contact ?? 'N/A',
+      status: request.status ?? 'Pending',
     }));
   }
 

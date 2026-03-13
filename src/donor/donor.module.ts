@@ -8,6 +8,7 @@ import {
   DonorAppointmentSchema,
 } from './schemas/donor-appointment.schema';
 import { BloodRequest, BloodRequestSchema } from './schemas/blood-request.schema';
+import { MailModuleModule } from '../mail-module/mail-module.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { BloodRequest, BloodRequestSchema } from './schemas/blood-request.schema
       { name: DonorAppointment.name, schema: DonorAppointmentSchema },
       { name: BloodRequest.name, schema: BloodRequestSchema },
     ]),
+    MailModuleModule,
   ],
   controllers: [DonorController],
   providers: [DonorService],

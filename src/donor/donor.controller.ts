@@ -11,7 +11,9 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import { DonorService } from './donor.service';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
+import { CreateBloodRequestDto } from './dto/create-blood-request.dto';
 import { CreateDonorDto } from './dto/create-donor.dto';
+import { UpdateBloodRequestStatusDto } from './dto/update-blood-request-status.dto';
 import { UpdateDonorDto } from './dto/update-donor.dto';
 import { UpdateNotificationSettingsDto } from './dto/update-notification-settings.dto';
 
@@ -41,6 +43,12 @@ export class DonorController {
   @Get('me')
   getMyProfile(@Req() req: AuthRequest) {
     return this.donorService.findByUserId(req.user.sub);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Post('upload-signature')
+  getUploadSignature() {
+    return this.donorService.getCloudinaryUploadSignature();
   }
 
   @UseGuards(AuthGuard('jwt'))
@@ -80,6 +88,22 @@ export class DonorController {
   @Get('requests')
   getRequests(@Req() req: AuthRequest) {
     return this.donorService.getRequests(req.user.sub);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Post('requests')
+  createRequest(@Req() req: AuthRequest, @Body() dto: CreateBloodRequestDto) {
+    return this.donorService.createRequest(req.user, dto);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Patch('requests/:requestId/status')
+  updateRequestStatus(
+    @Req() req: AuthRequest,
+    @Param('requestId') requestId: string,
+    @Body() dto: UpdateBloodRequestStatusDto,
+  ) {
+    return this.donorService.updateRequestStatus(req.user, requestId, dto.status);
   }
 
   @UseGuards(AuthGuard('jwt'))

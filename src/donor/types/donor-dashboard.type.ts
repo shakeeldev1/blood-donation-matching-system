@@ -80,6 +80,7 @@ export interface DonorHistoryResponse {
 export interface DonorRequestsResponse {
   stats: DashboardStat[];
   requests: Array<{
+    requestId: string;
     id: number;
     patientName: string;
     hospital: string;
@@ -90,6 +91,21 @@ export interface DonorRequestsResponse {
     postedTime: string;
     distance: string;
     contact: string;
+    status: 'Pending' | 'Accepted' | 'Fulfilled' | 'Closed';
+  }>;
+  myRequests: Array<{
+    requestId: string;
+    id: number;
+    patientName: string;
+    hospital: string;
+    location: string;
+    bloodGroup: string;
+    units: number;
+    urgency: string;
+    postedTime: string;
+    distance: string;
+    contact: string;
+    status: 'Pending' | 'Accepted' | 'Fulfilled' | 'Closed';
   }>;
 }
 
