@@ -7,6 +7,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Donor } from './schemas/donor.schema';
 import { DonorAppointment } from './schemas/donor-appointment.schema';
+import { BloodRequest } from './schemas/blood-request.schema';
 import { CreateDonorDto } from './dto/create-donor.dto';
 import { UpdateDonorDto } from './dto/update-donor.dto';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
@@ -39,17 +40,23 @@ export class DonorService {
     @InjectModel(Donor.name) private donorModel: Model<Donor>,
     @InjectModel(DonorAppointment.name)
     private appointmentModel: Model<DonorAppointment>,
+    @InjectModel(BloodRequest.name)
+    private bloodRequestModel: Model<BloodRequest>,
   ) {}
 
-  private readonly hospitalNames = [
+  private readonly seedHospitals = [
     'City General Hospital',
-    'Metro Care Center',
+    'Red Cross Trauma Unit',
     "St. Mary's Medical Center",
+    'Metro Care Center',
+    'Community Blood Bank',
   ];
 
-  private readonly urgencyLevels = ['High', 'Critical', 'Moderate'];
-
-  async create(userId: string, dto: CreateDonorDto): Promise<Donor> {
+  async create(
+    userId: string,
+    dto: CreateDonorDto,
+    verifiedIdentity?: { name?: string; email?: string },
+  ): Promise<Donor> {
     const existing = await this.donorModel.findOne({
       userId: new Types.ObjectId(userId),
     });
@@ -58,6 +65,8 @@ export class DonorService {
     }
     return this.donorModel.create({
       ...dto,
+      name: verifiedIdentity?.name ?? dto.name,
+      email: verifiedIdentity?.email ?? dto.email,
       userId: new Types.ObjectId(userId),
     });
   }
@@ -81,11 +90,21 @@ export class DonorService {
     return donor as Donor;
   }
 
-  async updateByUserId(userId: string, dto: UpdateDonorDto): Promise<Donor> {
+  async updateByUserId(
+    userId: string,
+    dto: UpdateDonorDto,
+    verifiedIdentity?: { name?: string; email?: string },
+  ): Promise<Donor> {
     const donor = await this.donorModel
       .findOneAndUpdate(
         { userId: new Types.ObjectId(userId) },
-        { $set: dto },
+        {
+          $set: {
+            ...dto,
+            ...(verifiedIdentity?.name ? { name: verifiedIdentity.name } : {}),
+            ...(verifiedIdentity?.email ? { email: verifiedIdentity.email } : {}),
+          },
+        },
         { new: true },
       )
       .lean()
@@ -128,6 +147,7 @@ export class DonorService {
         : daysUntilEligibility <= 0
           ? 100
           : Math.round(((56 - Math.min(daysUntilEligibility, 56)) / 56) * 100);
+    const matchedRequests = await this.getMatchedRequests(donor);
 
     return {
       donorProfile: donor,
@@ -169,7 +189,7 @@ export class DonorService {
         value: progressValue,
       },
       recentActivity: this.buildRecentActivity(donor, today),
-      matchedRequests: this.buildMatchedRequests(donor),
+      matchedRequests,
       eligibilityChart: this.buildEligibilityChart(donor?.lastDonation, today),
       readinessChart: this.buildReadinessChart(donor, progressValue),
     };
@@ -313,8 +333,24 @@ export class DonorService {
   }
 
   async getRequests(userId: string): Promise<DonorRequestsResponse> {
-    const donor = await this.findByUserId(userId);
-    const matchedRequests = this.buildMatchedRequests(donor as Donor);
+    const donor = (await this.donorModel
+      .findOne({ userId: new Types.ObjectId(userId) })
+      .lean()
+      .exec()) as Donor | null;
+
+    if (!donor) {
+      return {
+        stats: [
+          { label: 'Critical Needs', value: 0, badge: { text: 'Urgent', type: 'error' } },
+          { label: 'Nearby Requests', value: 0, subtext: 'Complete profile first' },
+          { label: 'Matched Units', value: 0, subtext: 'Total units needed' },
+        ],
+        requests: [],
+      };
+    }
+
+    const matchedRequests = await this.getMatchedRequests(donor, 8);
+
     return {
       stats: [
         {
@@ -329,21 +365,21 @@ export class DonorService {
         },
         {
           label: 'Matched Units',
-          value: matchedRequests.reduce((sum, _, index) => sum + (index + 1), 0),
+          value: matchedRequests.reduce((sum, request) => sum + Math.max(1, Number(request.units ?? 1)), 0),
           subtext: 'Total units needed',
         },
       ],
-      requests: matchedRequests.map((request, index) => ({
+      requests: matchedRequests.map((request) => ({
         id: request.id,
-        patientName: ['Sarah Connor', 'Michael Ross', 'Emily Blunt'][index] ?? `Patient ${index + 1}`,
+        patientName: request.patientName,
         hospital: request.hospital,
         location: request.location,
         bloodGroup: request.bloodGroup,
-        units: index + 1,
+        units: Math.max(1, Number(request.units ?? 1)),
         urgency: request.urgency,
-        postedTime: `${index * 3 + 2} hours ago`,
+        postedTime: this.formatPostedTime(request.createdAt),
         distance: request.distance,
-        contact: `+1 555 000 ${String(index + 1).padStart(3, '0')}`,
+        contact: request.contact,
       })),
     };
   }
@@ -435,21 +471,112 @@ export class DonorService {
     return items;
   }
 
-  private buildMatchedRequests(donor: Donor | null): DashboardRequestItem[] {
+  private async getMatchedRequests(
+    donor: Donor | null,
+    limit = 3,
+  ): Promise<
+    Array<
+      DashboardRequestItem & {
+        patientName: string;
+        units: number;
+        createdAt?: Date;
+        contact: string;
+      }
+    >
+  > {
     if (!donor) {
       return [];
     }
 
-    const compatibleGroups = this.getCompatibleGroups(donor.bloodGroup);
+    await this.ensureSeedRequests(donor.city);
 
-    return this.hospitalNames.map((hospital, index) => ({
+    const compatibleGroups = this.getCompatibleGroups(donor.bloodGroup);
+    const docs = await this.bloodRequestModel
+      .find({
+        city: donor.city,
+        bloodGroup: { $in: compatibleGroups },
+      })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean()
+      .exec();
+
+    const fallbackDocs =
+      docs.length >= limit
+        ? docs
+        : await this.bloodRequestModel
+            .find({ bloodGroup: { $in: compatibleGroups } })
+            .sort({ createdAt: -1 })
+            .limit(limit)
+            .lean()
+            .exec();
+
+    const requests = docs.length > 0 ? docs : fallbackDocs;
+
+    return requests.map((request, index) => ({
       id: index + 1,
-      hospital,
-      location: `${donor.city} • ${donor.donationType} match`,
-      bloodGroup: compatibleGroups[index % compatibleGroups.length],
-      urgency: this.urgencyLevels[index % this.urgencyLevels.length],
-      distance: `${(1.8 + index * 1.3).toFixed(1)} km`,
+      hospital: request.hospital,
+      location: `${request.city} • ${request.location}`,
+      bloodGroup: request.bloodGroup,
+      urgency: request.urgency,
+      distance: `${request.distanceKm.toFixed(1)} km`,
+      patientName: request.patientName ?? `Patient ${index + 1}`,
+      units: Math.max(1, Number(request.units ?? 1)),
+      createdAt: (request as { createdAt?: Date }).createdAt,
+      contact: request.contact ?? 'N/A',
     }));
+  }
+
+  private async ensureSeedRequests(city: string): Promise<void> {
+    const count = await this.bloodRequestModel.estimatedDocumentCount();
+    if (count > 0) {
+      return;
+    }
+
+    const now = Date.now();
+    const sampleCities = [city, 'Dhaka', 'Chattogram', 'Khulna'];
+    const sampleBloodGroups = ['A+', 'A-', 'B+', 'B-', 'AB+', 'O+', 'O-'];
+    const sampleUrgency: Array<'Critical' | 'High' | 'Moderate'> = [
+      'Critical',
+      'High',
+      'Moderate',
+    ];
+
+    const seed = Array.from({ length: 10 }).map((_, index) => ({
+      patientName: `Patient ${index + 1}`,
+      hospital: this.seedHospitals[index % this.seedHospitals.length],
+      location: `Unit ${10 + index}, Emergency Wing`,
+      city: sampleCities[index % sampleCities.length],
+      bloodGroup: sampleBloodGroups[index % sampleBloodGroups.length],
+      units: (index % 3) + 1,
+      urgency: sampleUrgency[index % sampleUrgency.length],
+      contact: `+8801${String(567000000 + index)}`,
+      distanceKm: Number((1.2 + index * 0.8).toFixed(1)),
+      createdAt: new Date(now - (index + 1) * 60 * 60 * 1000),
+      updatedAt: new Date(now - (index + 1) * 45 * 60 * 1000),
+    }));
+
+    await this.bloodRequestModel.insertMany(seed);
+  }
+
+  private formatPostedTime(dateValue?: Date): string {
+    if (!dateValue) {
+      return 'Recently';
+    }
+
+    const diffMs = Math.max(0, Date.now() - new Date(dateValue).getTime());
+    const diffMinutes = Math.floor(diffMs / (1000 * 60));
+    if (diffMinutes < 60) {
+      return `${Math.max(1, diffMinutes)} mins ago`;
+    }
+
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) {
+      return `${diffHours} hours ago`;
+    }
+
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays} days ago`;
   }
 
   private buildEligibilityChart(

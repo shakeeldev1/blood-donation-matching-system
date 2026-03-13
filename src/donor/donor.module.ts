@@ -7,12 +7,14 @@ import {
   DonorAppointment,
   DonorAppointmentSchema,
 } from './schemas/donor-appointment.schema';
+import { BloodRequest, BloodRequestSchema } from './schemas/blood-request.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Donor.name, schema: DonorSchema },
       { name: DonorAppointment.name, schema: DonorAppointmentSchema },
+      { name: BloodRequest.name, schema: BloodRequestSchema },
     ]),
   ],
   controllers: [DonorController],

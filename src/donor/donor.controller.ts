@@ -101,13 +101,19 @@ export class DonorController {
   @UseGuards(AuthGuard('jwt'))
   @Post()
   create(@Req() req: AuthRequest, @Body() dto: CreateDonorDto) {
-    return this.donorService.create(req.user.sub, dto);
+    return this.donorService.create(req.user.sub, dto, {
+      name: req.user.name,
+      email: req.user.email,
+    });
   }
 
   // Protected — updates the authenticated user's donor profile
   @UseGuards(AuthGuard('jwt'))
   @Patch('me')
   update(@Req() req: AuthRequest, @Body() dto: UpdateDonorDto) {
-    return this.donorService.updateByUserId(req.user.sub, dto);
+    return this.donorService.updateByUserId(req.user.sub, dto, {
+      name: req.user.name,
+      email: req.user.email,
+    });
   }
 }
