@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { MailModuleModule } from './mail-module/mail-module.module';
 import { ConfigModule } from '@nestjs/config';
 import { DonorModule } from './donor/donor.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { DonorModule } from './donor/donor.module';
     AuthModule,
     MailModuleModule,
     DonorModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],
