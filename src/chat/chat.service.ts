@@ -81,7 +81,7 @@ export class ChatService {
         })
         .populate('lastMessage')
         .populate('participants', 'name email')
-        .sort({ lastMessageAt: -1 })
+        .sort({ lastMessageAt: -1, createdAt: -1, _id: -1 })
         .exec();
 
       return conversations;
@@ -110,8 +110,21 @@ export class ChatService {
         throw new NotFoundException('Conversation not found');
       }
 
-      // Check if user is a participant
-      if (!conversation.participants.some((p: any) => p._id.equals(userObjectId))) {
+      // Check if user is a participant - handle both populated docs and raw ObjectIds
+      const isParticipant = conversation.participants.some((p: any) => {
+        // If p is a populated document, it will have _id property
+        if (p._id) {
+          return p._id.equals(userObjectId);
+        }
+        // If p is a raw ObjectId
+        if (typeof p.equals === 'function') {
+          return p.equals(userObjectId);
+        }
+        // Fallback: convert to string for comparison
+        return p.toString() === userObjectId.toString();
+      });
+
+      if (!isParticipant) {
         throw new ForbiddenException('You do not have access to this conversation');
       }
 

@@ -139,25 +139,37 @@ export class ChatGateway
         return;
       }
 
-      // Verify user is part of the conversation
-      const conversation = await this.chatService.getConversation(
-        conversationId,
-        userId,
-        1,
-        0,
-      );
-
-      if (!conversation) {
+      // Verify user is part of the conversation (simpler check without full populate)
+      let hasAccess = false;
+      try {
+        const conversation = await this.chatService.getConversation(
+          conversationId,
+          userId,
+          1,
+          0,
+        );
+        hasAccess = conversation ? true : false;
+      } catch (error) {
+        // If getConversation throws access denied, the user is not allowed
+        this.logger.warn(
+          `User ${userId} denied access to conversation ${conversationId}`,
+        );
         client.emit('error', { message: 'Conversation not found or access denied' });
         return;
       }
 
-      // Join the room
-      client.join(conversationId);
-      this.logger.log(`User ${userId} joined room ${conversationId}`);
+      if (!hasAccess) {
+        client.emit('error', { message: 'Conversation not found or access denied' });
+        return;
+      }
+
+      // Join the room with consistent string conversion
+      const roomId = conversationId.toString();
+      client.join(roomId);
+      this.logger.log(`✅ User ${userId} joined room ${roomId}`);
 
       // Notify others in the room
-      this.server.to(conversationId).emit('userJoined', {
+      this.server.to(roomId).emit('userJoined', {
         userId,
         timestamp: new Date(),
       });
@@ -191,11 +203,12 @@ export class ChatGateway
         return;
       }
 
-      client.leave(conversationId);
-      this.logger.log(`User ${userId} left room ${conversationId}`);
+      const roomId = conversationId.toString();
+      client.leave(roomId);
+      this.logger.log(`👋 User ${userId} left room ${roomId}`);
 
       // Notify others in the room
-      this.server.to(conversationId).emit('userLeft', {
+      this.server.to(roomId).emit('userLeft', {
         userId,
         timestamp: new Date(),
       });
@@ -247,7 +260,8 @@ export class ChatGateway
       const senderEmail = (sender && sender.email) ? sender.email : client.data.userEmail;
 
       // Broadcast to all users in the conversation (including sender)
-      this.server.to(data.conversationId).emit('messageReceived', {
+      const roomId = data.conversationId.toString();
+      this.server.to(roomId).emit('messageReceived', {
         _id: message._id,
         messageId: message._id,
         conversationId: data.conversationId,
@@ -262,7 +276,7 @@ export class ChatGateway
       });
 
       this.logger.log(
-        `Message ${message._id} broadcasted to room ${data.conversationId}`,
+        `✅ Message ${message._id} broadcasted to room ${roomId}`,
       );
     } catch (error) {
       this.logger.error(`Send message error: ${error}`);
@@ -295,7 +309,8 @@ export class ChatGateway
       );
 
       // Notify others
-      this.server.to(data.conversationId).emit('messagesRead', {
+      const roomId = data.conversationId.toString();
+      this.server.to(roomId).emit('messagesRead', {
         userId,
         conversationId: data.conversationId,
         messageIds: data.messageIds,
@@ -389,7 +404,9 @@ export class ChatGateway
       const senderEmail = (sender && sender.email) ? sender.email : 'unknown@email.com';
       const senderId = (sender && sender._id) ? sender._id : message.senderId;
 
-      this.server.to(conversationId).emit('messageReceived', {
+      // Use consistent string conversion for room ID
+      const roomId = conversationId.toString();
+      this.server.to(roomId).emit('messageReceived', {
         _id: message._id,
         messageId: message._id,
         conversationId,
@@ -404,7 +421,7 @@ export class ChatGateway
       });
       
       this.logger.log(
-        `✅ Message ${message._id} broadcasted to room ${conversationId}`,
+        `✅ Message ${message._id} broadcasted to room ${roomId}`,
       );
     } catch (error) {
       this.logger.error(`❌ Broadcast message error: ${error}`);
