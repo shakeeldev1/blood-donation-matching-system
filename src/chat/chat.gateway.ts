@@ -234,22 +234,36 @@ export class ChatGateway
       }
 
       // Save message to database
-      const message = await this.chatService.sendMessage(data, userId);
+      let message = await this.chatService.sendMessage(data, userId);
+      await message.populate('senderId', 'name email');
 
       this.logger.log(
         `Message sent in room ${data.conversationId} by user ${userId}`,
       );
 
-      // Broadcast to all users in the conversation
+      // Get sender info safely - cast after populate
+      const sender = message.senderId as any;
+      const senderName = (sender && sender.name) ? sender.name : 'Unknown';
+      const senderEmail = (sender && sender.email) ? sender.email : client.data.userEmail;
+
+      // Broadcast to all users in the conversation (including sender)
       this.server.to(data.conversationId).emit('messageReceived', {
+        _id: message._id,
         messageId: message._id,
         conversationId: data.conversationId,
-        senderId: userId,
-        senderEmail: client.data.userEmail,
+        senderId: message.senderId._id || message.senderId,
+        senderName,
+        senderEmail,
         content: message.content,
         attachments: message.attachments || [],
+        readBy: message.readBy || [],
+        isDeleted: message.isDeleted || false,
         createdAt: message.createdAt,
       });
+
+      this.logger.log(
+        `Message ${message._id} broadcasted to room ${data.conversationId}`,
+      );
     } catch (error) {
       this.logger.error(`Send message error: ${error}`);
       client.emit('error', {
@@ -362,26 +376,38 @@ export class ChatGateway
   /**
    * Broadcast message to all users in a conversation (called from REST API)
    */
-  broadcastMessage(conversationId: string, message: any): void {
+  async broadcastMessage(conversationId: string, message: any): Promise<void> {
     try {
+      // Ensure sender info is populated
+      if (message.senderId && typeof message.senderId !== 'string') {
+        await message.populate('senderId', 'name email');
+      }
+
+      // Get sender info safely - cast after populate
+      const sender = message.senderId as any;
+      const senderName = (sender && sender.name) ? sender.name : 'Unknown';
+      const senderEmail = (sender && sender.email) ? sender.email : 'unknown@email.com';
+      const senderId = (sender && sender._id) ? sender._id : message.senderId;
+
       this.server.to(conversationId).emit('messageReceived', {
+        _id: message._id,
         messageId: message._id,
         conversationId,
-        senderId: message.senderId._id || message.senderId,
-        senderName: message.senderId.name || 'Unknown',
-        senderEmail: message.senderId.email,
+        senderId,
+        senderName,
+        senderEmail,
         content: message.content,
         attachments: message.attachments || [],
-        createdAt: message.createdAt,
         readBy: message.readBy || [],
         isDeleted: message.isDeleted || false,
+        createdAt: message.createdAt,
       });
       
       this.logger.log(
-        `Message broadcasted to room ${conversationId}`,
+        `✅ Message ${message._id} broadcasted to room ${conversationId}`,
       );
     } catch (error) {
-      this.logger.error(`Broadcast message error: ${error}`);
+      this.logger.error(`❌ Broadcast message error: ${error}`);
     }
   }
 }

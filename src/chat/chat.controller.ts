@@ -10,6 +10,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { ChatService } from './chat.service';
 import { ChatGateway } from './chat.gateway';
 import { SendMessageDto, CreateConversationDto, MarkAsReadDto } from './dto/chat.dto';
@@ -19,6 +20,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 @Controller('chat')
 @UseGuards(JwtAuthGuard)
 export class ChatController {
+  private readonly logger = new Logger(ChatController.name);
+
   constructor(
     private chatService: ChatService,
     private chatGateway: ChatGateway,
@@ -69,15 +72,23 @@ export class ChatController {
     @Body() sendMessageDto: SendMessageDto,
     @CurrentUser() userId: string,
   ) {
-    const message = await this.chatService.sendMessage(sendMessageDto, userId);
-    
-    // Broadcast to all users in the conversation via Socket.io
-    this.chatGateway.broadcastMessage(
-      sendMessageDto.conversationId,
-      message,
-    );
+    try {
+      const message = await this.chatService.sendMessage(sendMessageDto, userId);
+      
+      // Populate sender info for broadcast
+      await message.populate('senderId', 'name email');
+      
+      // Broadcast to all users in the conversation via Socket.io
+      this.chatGateway.broadcastMessage(
+        sendMessageDto.conversationId,
+        message,
+      );
 
-    return message;
+      return message;
+    } catch (error) {
+      this.logger.error(`Send message error: ${error}`);
+      throw error;
+    }
   }
 
   /**
