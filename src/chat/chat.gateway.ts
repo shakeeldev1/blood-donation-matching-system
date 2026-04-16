@@ -358,4 +358,30 @@ export class ChatGateway
       });
     }
   }
+
+  /**
+   * Broadcast message to all users in a conversation (called from REST API)
+   */
+  broadcastMessage(conversationId: string, message: any): void {
+    try {
+      this.server.to(conversationId).emit('messageReceived', {
+        messageId: message._id,
+        conversationId,
+        senderId: message.senderId._id || message.senderId,
+        senderName: message.senderId.name || 'Unknown',
+        senderEmail: message.senderId.email,
+        content: message.content,
+        attachments: message.attachments || [],
+        createdAt: message.createdAt,
+        readBy: message.readBy || [],
+        isDeleted: message.isDeleted || false,
+      });
+      
+      this.logger.log(
+        `Message broadcasted to room ${conversationId}`,
+      );
+    } catch (error) {
+      this.logger.error(`Broadcast message error: ${error}`);
+    }
+  }
 }

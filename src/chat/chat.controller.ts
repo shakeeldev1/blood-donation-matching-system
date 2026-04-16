@@ -11,6 +11,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { ChatService } from './chat.service';
+import { ChatGateway } from './chat.gateway';
 import { SendMessageDto, CreateConversationDto, MarkAsReadDto } from './dto/chat.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -18,7 +19,10 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 @Controller('chat')
 @UseGuards(JwtAuthGuard)
 export class ChatController {
-  constructor(private chatService: ChatService) {}
+  constructor(
+    private chatService: ChatService,
+    private chatGateway: ChatGateway,
+  ) {}
 
   /**
    * Create a new conversation
@@ -65,7 +69,15 @@ export class ChatController {
     @Body() sendMessageDto: SendMessageDto,
     @CurrentUser() userId: string,
   ) {
-    return this.chatService.sendMessage(sendMessageDto, userId);
+    const message = await this.chatService.sendMessage(sendMessageDto, userId);
+    
+    // Broadcast to all users in the conversation via Socket.io
+    this.chatGateway.broadcastMessage(
+      sendMessageDto.conversationId,
+      message,
+    );
+
+    return message;
   }
 
   /**
