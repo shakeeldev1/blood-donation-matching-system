@@ -8,6 +8,7 @@ import { MailModuleModule } from './mail-module/mail-module.module';
 import { ConfigModule } from '@nestjs/config';
 import { DonorModule } from './donor/donor.module';
 import { AdminModule } from './admin/admin.module';
+import { ChatModule } from './chat/chat.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { AdminModule } from './admin/admin.module';
     MailModuleModule,
     DonorModule,
     AdminModule,
+    ChatModule,
   ],
   controllers: [AppController],
   providers: [AppService],
