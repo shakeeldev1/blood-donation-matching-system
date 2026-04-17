@@ -196,7 +196,49 @@ export class ChatService {
         .sort({ lastMessageAt: -1, createdAt: -1, _id: -1 })
         .exec();
 
-      return conversations;
+      // Attach unreadCount per conversation for this user
+      const conversationIds = conversations
+        .map((c) => c._id)
+        .filter(Boolean)
+        .map((id) => new Types.ObjectId(id));
+
+      const unreadCountsByConversationId = new Map<string, number>();
+      if (conversationIds.length > 0) {
+        const unreadAgg = await this.messageModel
+          .aggregate([
+            {
+              $match: {
+                conversationId: { $in: conversationIds },
+                isDeleted: { $ne: true },
+                senderId: { $ne: userObjectId },
+                readBy: {
+                  $not: {
+                    $elemMatch: { $eq: userObjectId },
+                  },
+                },
+              },
+            },
+            {
+              $group: {
+                _id: '$conversationId',
+                unreadCount: { $sum: 1 },
+              },
+            },
+          ])
+          .exec();
+
+        for (const row of unreadAgg) {
+          if (row?._id) {
+            unreadCountsByConversationId.set(String(row._id), Number(row.unreadCount) || 0);
+          }
+        }
+      }
+
+      return conversations.map((c) => {
+        const obj = c.toObject({ virtuals: true });
+        const unreadCount = unreadCountsByConversationId.get(String(c._id)) ?? 0;
+        return { ...obj, unreadCount };
+      });
     } catch (error) {
       throw new BadRequestException(
         `Failed to fetch conversations: ${error instanceof Error ? error.message : 'Unknown error'}`,
