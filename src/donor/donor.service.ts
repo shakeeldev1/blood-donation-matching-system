@@ -185,7 +185,7 @@ export class DonorService {
         : daysUntilEligibility <= 0
           ? 100
           : Math.round(((56 - Math.min(daysUntilEligibility, 56)) / 56) * 100);
-    const matchedRequests = await this.getMatchedRequests(donor);
+    const matchedRequests = await this.getMatchedRequests(donor, user.sub);
 
     return {
       donorProfile: donor,
@@ -410,7 +410,7 @@ export class DonorService {
       };
     }
 
-    const matchedRequests = await this.getMatchedRequests(donor, 8);
+    const matchedRequests = await this.getMatchedRequests(donor, userId, 8);
 
     return {
       stats: [
@@ -518,33 +518,157 @@ export class DonorService {
     }
 
     const isOwner = request.requesterUserId === user.sub;
-    const ownerAllowed = ['Closed', 'Fulfilled', 'Pending'];
-    const responderAllowed = ['Accepted', 'Fulfilled'];
 
-    if (isOwner && !ownerAllowed.includes(status)) {
+    const ensureResponderIsDonor = async () => {
+      const donor = await this.donorModel
+        .exists({ userId: new Types.ObjectId(user.sub) })
+        .exec();
+      if (!donor) {
+        throw new ForbiddenException('Only donors can accept or fulfill requests');
+      }
+    };
+
+    const now = new Date();
+
+    // Owner actions
+    if (isOwner) {
+      if (status === 'Closed') {
+        const updated = await this.bloodRequestModel
+          .findOneAndUpdate(
+            { _id: requestId, requesterUserId: user.sub },
+            { $set: { status: 'Closed', closedAt: now } },
+            { new: true },
+          )
+          .lean()
+          .exec();
+        if (!updated) throw new NotFoundException('Request not found');
+        return this.buildRequestStatusResultAndNotify(updated, user);
+      }
+
+      if (status === 'Pending') {
+        const updated = await this.bloodRequestModel
+          .findOneAndUpdate(
+            { _id: requestId, requesterUserId: user.sub },
+            {
+              $set: { status: 'Pending' },
+              $unset: {
+                acceptedByUserId: 1,
+                acceptedByName: 1,
+                acceptedAt: 1,
+                fulfilledByUserId: 1,
+                fulfilledByName: 1,
+                fulfilledAt: 1,
+                closedAt: 1,
+              },
+            },
+            { new: true },
+          )
+          .lean()
+          .exec();
+        if (!updated) throw new NotFoundException('Request not found');
+        return this.buildRequestStatusResultAndNotify(updated, user);
+      }
+
+      if (status === 'Fulfilled') {
+        const updated = await this.bloodRequestModel
+          .findOneAndUpdate(
+            { _id: requestId, requesterUserId: user.sub },
+            {
+              $set: {
+                status: 'Fulfilled',
+                fulfilledByUserId: user.sub,
+                fulfilledByName: user.name,
+                fulfilledAt: now,
+              },
+            },
+            { new: true },
+          )
+          .lean()
+          .exec();
+        if (!updated) throw new NotFoundException('Request not found');
+        return this.buildRequestStatusResultAndNotify(updated, user);
+      }
+
       throw new BadRequestException('Owners can set Pending, Fulfilled, or Closed');
     }
 
-    if (!isOwner && !responderAllowed.includes(status)) {
-      throw new ForbiddenException('Only request owner can apply this status');
+    // Responder (non-owner) actions
+    await ensureResponderIsDonor();
+
+    if (status === 'Accepted') {
+      // Only accept if still pending (prevents races)
+      const updated = await this.bloodRequestModel
+        .findOneAndUpdate(
+          { _id: requestId, status: 'Pending' },
+          {
+            $set: {
+              status: 'Accepted',
+              acceptedByUserId: user.sub,
+              acceptedByName: user.name,
+              acceptedAt: now,
+            },
+          },
+          { new: true },
+        )
+        .lean()
+        .exec();
+
+      if (!updated) {
+        // Re-check current status for a better message
+        const latest = await this.bloodRequestModel.findById(requestId).lean().exec();
+        if (!latest) throw new NotFoundException('Request not found');
+        if (latest.status !== 'Pending') {
+          throw new ConflictException('This request is no longer pending');
+        }
+        throw new ConflictException('Could not accept the request');
+      }
+
+      return this.buildRequestStatusResultAndNotify(updated, user);
     }
 
-    const updated = await this.bloodRequestModel
-      .findByIdAndUpdate(requestId, { $set: { status } }, { new: true })
-      .lean()
-      .exec();
+    if (status === 'Fulfilled') {
+      // Only the accepting donor can fulfill
+      const updated = await this.bloodRequestModel
+        .findOneAndUpdate(
+          { _id: requestId, status: 'Accepted', acceptedByUserId: user.sub },
+          {
+            $set: {
+              status: 'Fulfilled',
+              fulfilledByUserId: user.sub,
+              fulfilledByName: user.name,
+              fulfilledAt: now,
+            },
+          },
+          { new: true },
+        )
+        .lean()
+        .exec();
 
-    if (!updated) {
-      throw new NotFoundException('Request not found');
+      if (!updated) {
+        const latest = await this.bloodRequestModel.findById(requestId).lean().exec();
+        if (!latest) throw new NotFoundException('Request not found');
+        if (latest.status !== 'Accepted') {
+          throw new ConflictException('Only accepted requests can be fulfilled');
+        }
+        throw new ForbiddenException('Only the accepting donor can fulfill this request');
+      }
+
+      return this.buildRequestStatusResultAndNotify(updated, user);
     }
 
+    throw new ForbiddenException('Only request owner can apply this status');
+  }
+
+  private buildRequestStatusResultAndNotify(
+    updated: any,
+    user: { sub: string; name: string; email: string },
+  ) {
     const result = {
       requestId: String((updated as { _id: Types.ObjectId })._id),
       status: updated.status,
       updatedAt: (updated as { updatedAt?: Date }).updatedAt,
     };
 
-    // Notify the requester about the status change (fire-and-forget)
     const recipientEmail = updated.requesterEmail;
     if (recipientEmail) {
       this.mailService
@@ -557,7 +681,9 @@ export class DonorService {
           updatedByName: user.name,
           requestId: result.requestId,
         })
-        .catch(() => { /* non-blocking */ });
+        .catch(() => {
+          /* non-blocking */
+        });
     }
 
     return result;
@@ -652,6 +778,7 @@ export class DonorService {
 
   private async getMatchedRequests(
     donor: Donor | null,
+    viewerUserId?: string,
     limit = 3,
   ): Promise<
     Array<
@@ -676,6 +803,13 @@ export class DonorService {
       .find({
         city: donor.city,
         bloodGroup: { $in: compatibleGroups },
+        ...(viewerUserId ? { requesterUserId: { $ne: viewerUserId } } : {}),
+        $or: [
+          { status: 'Pending' },
+          ...(viewerUserId
+            ? [{ status: 'Accepted', acceptedByUserId: viewerUserId }]
+            : []),
+        ],
       })
       .sort({ createdAt: -1 })
       .limit(limit)
@@ -686,7 +820,16 @@ export class DonorService {
       docs.length >= limit
         ? docs
         : await this.bloodRequestModel
-            .find({ bloodGroup: { $in: compatibleGroups } })
+            .find({
+              bloodGroup: { $in: compatibleGroups },
+              ...(viewerUserId ? { requesterUserId: { $ne: viewerUserId } } : {}),
+              $or: [
+                { status: 'Pending' },
+                ...(viewerUserId
+                  ? [{ status: 'Accepted', acceptedByUserId: viewerUserId }]
+                  : []),
+              ],
+            })
             .sort({ createdAt: -1 })
             .limit(limit)
             .lean()

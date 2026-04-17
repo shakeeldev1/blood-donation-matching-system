@@ -45,6 +45,27 @@ export class BloodRequest extends Document {
     default: 'Pending',
   })
   status!: 'Pending' | 'Accepted' | 'Fulfilled' | 'Closed';
+
+  @Prop()
+  acceptedByUserId?: string;
+
+  @Prop()
+  acceptedByName?: string;
+
+  @Prop()
+  acceptedAt?: Date;
+
+  @Prop()
+  fulfilledByUserId?: string;
+
+  @Prop()
+  fulfilledByName?: string;
+
+  @Prop()
+  fulfilledAt?: Date;
+
+  @Prop()
+  closedAt?: Date;
 }
 
 export const BloodRequestSchema = SchemaFactory.createForClass(BloodRequest);
