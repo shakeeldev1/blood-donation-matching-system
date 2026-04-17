@@ -10,6 +10,8 @@ import { Model, Types } from 'mongoose';
 import { Message } from './schemas/message.schema';
 import { Conversation } from './schemas/conversation.schema';
 import { SendMessageDto, CreateConversationDto, MarkAsReadDto } from './dto/chat.dto';
+import { User } from 'src/user/schemas/user.schema';
+import { Donor } from 'src/donor/schemas/donor.schema';
 
 @Injectable()
 export class ChatService {
@@ -18,7 +20,86 @@ export class ChatService {
     private messageModel: Model<Message>,
     @InjectModel(Conversation.name)
     private conversationModel: Model<Conversation>,
+    @InjectModel(User.name)
+    private userModel: Model<User>,
+    @InjectModel(Donor.name)
+    private donorModel: Model<Donor>,
   ) {}
+
+  private toObjectId(value: string) {
+    if (!Types.ObjectId.isValid(value)) {
+      throw new BadRequestException(`Invalid id: ${value}`);
+    }
+    return new Types.ObjectId(value);
+  }
+
+  private async getUserAliasIds(userId: string): Promise<{ userObjectId: Types.ObjectId; donorObjectId?: Types.ObjectId }> {
+    const userObjectId = this.toObjectId(userId);
+    const donor = await this.donorModel
+      .findOne({ userId: userObjectId })
+      .select('_id')
+      .lean()
+      .exec();
+
+    return {
+      userObjectId,
+      donorObjectId: donor?._id ? new Types.ObjectId(donor._id) : undefined,
+    };
+  }
+
+  private async resolveToUserId(possibleUserOrDonorId: Types.ObjectId): Promise<Types.ObjectId> {
+    const userExists = await this.userModel
+      .exists({ _id: possibleUserOrDonorId })
+      .exec();
+    if (userExists) {
+      return possibleUserOrDonorId;
+    }
+
+    const donor = await this.donorModel
+      .findById(possibleUserOrDonorId)
+      .select('userId')
+      .lean()
+      .exec();
+
+    if (donor?.userId) {
+      return new Types.ObjectId(donor.userId);
+    }
+
+    return possibleUserOrDonorId;
+  }
+
+  private async normalizeConversationParticipants(conversationId: Types.ObjectId, participants: Types.ObjectId[]) {
+    const normalized = await Promise.all(
+      participants.map((id) => this.resolveToUserId(new Types.ObjectId(id))),
+    );
+
+    const uniqueNormalized = Array.from(
+      new Map(normalized.map((id) => [id.toString(), id])).values(),
+    );
+
+    const changed =
+      uniqueNormalized.length !== participants.length ||
+      uniqueNormalized.some((id, idx) => !participants[idx]?.equals?.(id));
+
+    if (!changed) {
+      return;
+    }
+
+    await this.conversationModel
+      .updateOne(
+        { _id: conversationId },
+        { $set: { participants: uniqueNormalized } },
+      )
+      .exec();
+  }
+
+  private participantMatchesAnyId(participant: any, allowedIds: Types.ObjectId[]) {
+    const candidate = participant?._id ?? participant;
+    if (candidate && typeof candidate.equals === 'function') {
+      return allowedIds.some((id) => candidate.equals(id));
+    }
+    return allowedIds.some((id) => id.toString() === String(candidate));
+  }
 
   /**
    * Create a new conversation
@@ -28,9 +109,17 @@ export class ChatService {
     userId: string,
   ) {
     try {
-      const userObjectId = new Types.ObjectId(userId);
-      const participantObjectIds = createConversationDto.participants.map(
-        (id) => new Types.ObjectId(id),
+      const { userObjectId } = await this.getUserAliasIds(userId);
+
+      const resolvedParticipantIds = await Promise.all(
+        createConversationDto.participants.map(async (id) => {
+          const objectId = this.toObjectId(id);
+          return this.resolveToUserId(objectId);
+        }),
+      );
+
+      const participantObjectIds = Array.from(
+        new Map(resolvedParticipantIds.map((id) => [id.toString(), id])).values(),
       );
 
       // Ensure the creator is included in participants
@@ -73,7 +162,30 @@ export class ChatService {
    */
   async getUserConversations(userId: string) {
     try {
-      const userObjectId = new Types.ObjectId(userId);
+      const { userObjectId, donorObjectId } = await this.getUserAliasIds(userId);
+      const participantMatchIds = donorObjectId ? [userObjectId, donorObjectId] : [userObjectId];
+
+      // Step 1: find by either User._id or Donor._id (legacy conversations)
+      const candidateConversations = await this.conversationModel
+        .find({
+          participants: { $in: participantMatchIds },
+          isArchived: { $ne: true },
+        })
+        .select('_id participants')
+        .lean()
+        .exec();
+
+      // Step 2: normalize any legacy participant ids (Donor._id -> User._id)
+      await Promise.all(
+        candidateConversations.map((conv) =>
+          this.normalizeConversationParticipants(
+            new Types.ObjectId(conv._id),
+            (conv.participants as any[]).map((p) => new Types.ObjectId(p)),
+          ),
+        ),
+      );
+
+      // Step 3: fetch again with normal population
       const conversations = await this.conversationModel
         .find({
           participants: userObjectId,
@@ -97,9 +209,30 @@ export class ChatService {
    */
   async getConversation(conversationId: string, userId: string, limit = 50, skip = 0) {
     try {
-      const conversationObjectId = new Types.ObjectId(conversationId);
-      const userObjectId = new Types.ObjectId(userId);
+      const conversationObjectId = this.toObjectId(conversationId);
+      const { userObjectId, donorObjectId } = await this.getUserAliasIds(userId);
+      const allowedIds = donorObjectId ? [userObjectId, donorObjectId] : [userObjectId];
 
+      const rawConversation = await this.conversationModel.findById(conversationObjectId).exec();
+      if (!rawConversation) {
+        throw new NotFoundException('Conversation not found');
+      }
+
+      await this.normalizeConversationParticipants(
+        conversationObjectId,
+        rawConversation.participants as unknown as Types.ObjectId[],
+      );
+
+      const normalizedConversationRaw = await this.conversationModel
+        .findById(conversationObjectId)
+        .select('participants')
+        .lean()
+        .exec();
+
+      const normalizedParticipants: Types.ObjectId[] =
+        (normalizedConversationRaw?.participants as any[])?.map((p) => new Types.ObjectId(p)) ?? [];
+
+      // Now populate (participants are normalized to User ids when possible)
       const conversation = await this.conversationModel
         .findById(conversationObjectId)
         .populate('participants', 'name email')
@@ -110,19 +243,9 @@ export class ChatService {
         throw new NotFoundException('Conversation not found');
       }
 
-      // Check if user is a participant - handle both populated docs and raw ObjectIds
-      const isParticipant = conversation.participants.some((p: any) => {
-        // If p is a populated document, it will have _id property
-        if (p._id) {
-          return p._id.equals(userObjectId);
-        }
-        // If p is a raw ObjectId
-        if (typeof p.equals === 'function') {
-          return p.equals(userObjectId);
-        }
-        // Fallback: convert to string for comparison
-        return p.toString() === userObjectId.toString();
-      });
+      const isParticipant = normalizedParticipants.some((p) =>
+        allowedIds.some((allowed) => p.equals(allowed)),
+      );
 
       if (!isParticipant) {
         throw new ForbiddenException('You do not have access to this conversation');
@@ -168,8 +291,9 @@ export class ChatService {
     userId: string,
   ) {
     try {
-      const conversationObjectId = new Types.ObjectId(sendMessageDto.conversationId);
-      const userObjectId = new Types.ObjectId(userId);
+      const conversationObjectId = this.toObjectId(sendMessageDto.conversationId);
+      const { userObjectId, donorObjectId } = await this.getUserAliasIds(userId);
+      const allowedIds = donorObjectId ? [userObjectId, donorObjectId] : [userObjectId];
 
       // Verify conversation exists and user is a participant
       const conversation = await this.conversationModel.findById(conversationObjectId);
@@ -178,7 +302,12 @@ export class ChatService {
         throw new NotFoundException('Conversation not found');
       }
 
-      if (!conversation.participants.some((p) => p.equals(userObjectId))) {
+      await this.normalizeConversationParticipants(
+        conversationObjectId,
+        conversation.participants as unknown as Types.ObjectId[],
+      );
+
+      if (!conversation.participants.some((p: any) => this.participantMatchesAnyId(p, allowedIds))) {
         throw new ForbiddenException('You do not have access to this conversation');
       }
 
@@ -225,8 +354,9 @@ export class ChatService {
     userId: string,
   ) {
     try {
-      const conversationObjectId = new Types.ObjectId(markAsReadDto.conversationId);
-      const userObjectId = new Types.ObjectId(userId);
+      const conversationObjectId = this.toObjectId(markAsReadDto.conversationId);
+      const { userObjectId, donorObjectId } = await this.getUserAliasIds(userId);
+      const allowedIds = donorObjectId ? [userObjectId, donorObjectId] : [userObjectId];
 
       // Verify user is a participant
       const conversation = await this.conversationModel.findById(conversationObjectId);
@@ -235,7 +365,12 @@ export class ChatService {
         throw new NotFoundException('Conversation not found');
       }
 
-      if (!conversation.participants.some((p) => p.equals(userObjectId))) {
+      await this.normalizeConversationParticipants(
+        conversationObjectId,
+        conversation.participants as unknown as Types.ObjectId[],
+      );
+
+      if (!conversation.participants.some((p: any) => this.participantMatchesAnyId(p, allowedIds))) {
         throw new ForbiddenException('You do not have access to this conversation');
       }
 
@@ -286,12 +421,13 @@ export class ChatService {
    */
   async getUnreadCount(userId: string) {
     try {
-      const userObjectId = new Types.ObjectId(userId);
+      const { userObjectId, donorObjectId } = await this.getUserAliasIds(userId);
+      const participantMatchIds = donorObjectId ? [userObjectId, donorObjectId] : [userObjectId];
 
       const unreadConversations = await this.conversationModel.aggregate([
         {
           $match: {
-            participants: userObjectId,
+            participants: { $in: participantMatchIds },
             isArchived: { $ne: true },
           },
         },

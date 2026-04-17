@@ -81,9 +81,7 @@ export class ChatGateway
       }
       this.userSockets.get(userId)!.add(client.id);
 
-      this.logger.log(
-        `✅ User connected - ID: ${userId}, Email: ${userEmail}, Socket: ${client.id}`,
-      );
+      // Connection established
 
       // Emit connection confirmation
       client.emit('connected', {
@@ -114,9 +112,7 @@ export class ChatGateway
         }
       }
 
-      this.logger.log(
-        `❌ User disconnected - ID: ${userId || 'unknown'}, Socket: ${client.id}`,
-      );
+      // Disconnected
     } catch (error) {
       this.logger.error(`Disconnection error: ${error}`);
     }
@@ -133,53 +129,57 @@ export class ChatGateway
     try {
       const { conversationId } = data;
       const userId = client.data.userId;
+      const roomId = conversationId.toString();
 
       if (!conversationId) {
+        this.logger.warn(`Join failed - missing conversation ID, socket: ${client.id}`);
         client.emit('error', { message: 'Conversation ID is required' });
         return;
       }
 
       // Verify user is part of the conversation (simpler check without full populate)
       let hasAccess = false;
+      let conversationData: any = null;
       try {
-        const conversation = await this.chatService.getConversation(
+        conversationData = await this.chatService.getConversation(
           conversationId,
           userId,
           1,
           0,
         );
-        hasAccess = conversation ? true : false;
+        hasAccess = conversationData ? true : false;
       } catch (error) {
         // If getConversation throws access denied, the user is not allowed
-        this.logger.warn(
-          `User ${userId} denied access to conversation ${conversationId}`,
+        this.logger.error(
+          `❌ Access check failed for user ${userId} on conversation ${roomId}: ${error instanceof Error ? error.message : error}`,
         );
         client.emit('error', { message: 'Conversation not found or access denied' });
         return;
       }
 
       if (!hasAccess) {
+        this.logger.warn(`❌ User ${userId} has no access to conversation ${roomId} (hasAccess=false)`);
         client.emit('error', { message: 'Conversation not found or access denied' });
         return;
       }
 
-      // Join the room with consistent string conversion
-      const roomId = conversationId.toString();
+      // Join the room
       client.join(roomId);
-      this.logger.log(`✅ User ${userId} joined room ${roomId}`);
+
+      // Emit acknowledgement to the client who joined
+      client.emit('roomJoined', {
+        conversationId,
+        success: true,
+      });
 
       // Notify others in the room
       this.server.to(roomId).emit('userJoined', {
         userId,
         timestamp: new Date(),
       });
-
-      client.emit('roomJoined', {
-        conversationId,
-        success: true,
-      });
     } catch (error) {
-      this.logger.error(`Join room error: ${error}`);
+      this.logger.error(`❌ Join room error: ${error instanceof Error ? error.message : error}`);
+      this.logger.error(`Stack:`, error);
       client.emit('error', {
         message: error instanceof Error ? error.message : 'Failed to join room',
       });
@@ -205,7 +205,6 @@ export class ChatGateway
 
       const roomId = conversationId.toString();
       client.leave(roomId);
-      this.logger.log(`👋 User ${userId} left room ${roomId}`);
 
       // Notify others in the room
       this.server.to(roomId).emit('userLeft', {
@@ -235,13 +234,15 @@ export class ChatGateway
   ): Promise<void> {
     try {
       const userId = client.data.userId;
+      const roomId = data.conversationId.toString();
 
       if (!data.conversationId || !data.content?.trim()) {
+        this.logger.warn(`[SEND] Validation failed - missing data from user ${userId}`);
         client.emit('error', { message: 'Conversation ID and content required' });
         return;
       }
 
-      if (!client.rooms.has(data.conversationId)) {
+      if (!client.rooms.has(roomId)) {
         client.emit('error', { message: 'You must join the room first' });
         return;
       }
@@ -250,18 +251,12 @@ export class ChatGateway
       let message = await this.chatService.sendMessage(data, userId);
       await message.populate('senderId', 'name email');
 
-      this.logger.log(
-        `Message sent in room ${data.conversationId} by user ${userId}`,
-      );
-
       // Get sender info safely - cast after populate
       const sender = message.senderId as any;
       const senderName = (sender && sender.name) ? sender.name : 'Unknown';
       const senderEmail = (sender && sender.email) ? sender.email : client.data.userEmail;
 
-      // Broadcast to all users in the conversation (including sender)
-      const roomId = data.conversationId.toString();
-      this.server.to(roomId).emit('messageReceived', {
+      const messagePayload = {
         _id: message._id,
         messageId: message._id,
         conversationId: data.conversationId,
@@ -273,13 +268,13 @@ export class ChatGateway
         readBy: message.readBy || [],
         isDeleted: message.isDeleted || false,
         createdAt: message.createdAt,
-      });
+      };
 
-      this.logger.log(
-        `✅ Message ${message._id} broadcasted to room ${roomId}`,
-      );
+      // Broadcast to all users in the conversation (including sender)
+      this.server.to(roomId).emit('messageReceived', messagePayload);
     } catch (error) {
-      this.logger.error(`Send message error: ${error}`);
+      this.logger.error(`❌ Send message error: ${error instanceof Error ? error.message : error}`);
+      this.logger.error(`Stack:`, error);
       client.emit('error', {
         message: error instanceof Error ? error.message : 'Failed to send message',
       });
@@ -303,10 +298,6 @@ export class ChatGateway
       }
 
       await this.chatService.markMessagesAsRead(data, userId);
-
-      this.logger.log(
-        `Messages marked as read in room ${data.conversationId} by user ${userId}`,
-      );
 
       // Notify others
       const roomId = data.conversationId.toString();
@@ -419,10 +410,6 @@ export class ChatGateway
         isDeleted: message.isDeleted || false,
         createdAt: message.createdAt,
       });
-      
-      this.logger.log(
-        `✅ Message ${message._id} broadcasted to room ${roomId}`,
-      );
     } catch (error) {
       this.logger.error(`❌ Broadcast message error: ${error}`);
     }
