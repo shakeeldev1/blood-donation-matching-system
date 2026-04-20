@@ -9,6 +9,7 @@ import { ConfigModule } from '@nestjs/config';
 import { DonorModule } from './donor/donor.module';
 import { AdminModule } from './admin/admin.module';
 import { ChatModule } from './chat/chat.module';
+import { PaymentModule } from './payment/payment.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { ChatModule } from './chat/chat.module';
     DonorModule,
     AdminModule,
     ChatModule,
+    PaymentModule,
   ],
   controllers: [AppController],
   providers: [AppService],
