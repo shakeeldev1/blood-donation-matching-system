@@ -40,11 +40,41 @@ export class Donor extends Document {
   @Prop({ required: true })
   weight!: string;
 
+  @Prop()
+  height?: string; // in cm, for BMI calculation
+
+  @Prop()
+  bmi?: number; // Calculated: weight(kg) / (height(m)^2)
+
   @Prop({ required: true, enum: ['Male', 'Female', 'Other'] })
   gender!: string;
 
   @Prop({ default: 'None' })
   medicalConditions!: string;
+
+  @Prop()
+  bloodPressure?: string; // Format: 120/80
+
+  @Prop()
+  hemoglobinLevel?: number; // in g/dL, typical 13.5-17.5 for men, 12-15.5 for women
+
+  @Prop()
+  lastHealthCheckup?: string; // Date: YYYY-MM-DD
+
+  @Prop({ default: false })
+  hasTattooOrPiercing?: boolean;
+
+  @Prop()
+  tattooOrPiercingDetails?: string; // If yes, when was it done
+
+  @Prop()
+  currentMedications?: string; // List of medications being taken
+
+  @Prop()
+  allergies?: string; // Allergy information
+
+  @Prop()
+  dietaryRestrictions?: string; // e.g., Vegetarian, Vegan, etc.
 
   @Prop()
   lastDonation?: string;
@@ -54,6 +84,9 @@ export class Donor extends Document {
 
   @Prop({ enum: ['Free', 'Paid'], default: 'Free' })
   status!: string;
+
+  @Prop({ min: 0, max: 100 })
+  serviceFee?: number; // In currency units (e.g., USD), only used when status is 'Paid'
 
   @Prop({ default: 5 })
   rating!: number;

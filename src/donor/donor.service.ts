@@ -61,6 +61,25 @@ export class DonorService {
     'Community Blood Bank',
   ];
 
+  // Helper method to calculate BMI from weight and height
+  private calculateBMI(weight?: string | number, height?: string | number): number | undefined {
+    if (!weight || !height) {
+      return undefined;
+    }
+
+    const w = typeof weight === 'string' ? parseFloat(weight) : weight;
+    const h = typeof height === 'string' ? parseFloat(height) : height;
+
+    if (!w || !h || w <= 0 || h <= 0 || isNaN(w) || isNaN(h)) {
+      return undefined;
+    }
+
+    // BMI = weight(kg) / (height(m)^2)
+    const heightInMeters = h / 100;
+    const bmi = w / (heightInMeters * heightInMeters);
+    return Math.round(bmi * 10) / 10; // Round to 1 decimal place
+  }
+
   getCloudinaryUploadSignature() {
     const cloudName = this.configService.get<string>('CLOUDINARY_CLOUD_NAME');
     const apiKey = this.configService.get<string>('CLOUDINARY_API_KEY');
@@ -101,8 +120,13 @@ export class DonorService {
     if (existing) {
       throw new ConflictException('Donor profile already exists');
     }
+
+    // Auto-calculate BMI if height is provided
+    const bmi = this.calculateBMI(dto.weight, dto.height);
+
     return this.donorModel.create({
       ...dto,
+      bmi,
       name: verifiedIdentity?.name ?? dto.name,
       email: verifiedIdentity?.email ?? dto.email,
       userId: new Types.ObjectId(userId),
@@ -133,16 +157,32 @@ export class DonorService {
     dto: UpdateDonorDto,
     verifiedIdentity?: { name?: string; email?: string },
   ): Promise<Donor> {
+    // Get current donor data to use for BMI calculation
+    const currentDonor = await this.donorModel
+      .findOne({ userId: new Types.ObjectId(userId) })
+      .lean()
+      .exec();
+
+    if (!currentDonor) {
+      throw new NotFoundException('Donor profile not found');
+    }
+
+    // Auto-calculate BMI if weight or height is being updated
+    const weight = dto.weight ?? currentDonor.weight;
+    const height = dto.height ?? currentDonor.height;
+    const bmi = this.calculateBMI(weight, height);
+
+    const updateData = {
+      ...dto,
+      ...(bmi !== undefined ? { bmi } : {}),
+      ...(verifiedIdentity?.name ? { name: verifiedIdentity.name } : {}),
+      ...(verifiedIdentity?.email ? { email: verifiedIdentity.email } : {}),
+    };
+
     const donor = await this.donorModel
       .findOneAndUpdate(
         { userId: new Types.ObjectId(userId) },
-        {
-          $set: {
-            ...dto,
-            ...(verifiedIdentity?.name ? { name: verifiedIdentity.name } : {}),
-            ...(verifiedIdentity?.email ? { email: verifiedIdentity.email } : {}),
-          },
-        },
+        { $set: updateData },
         { new: true },
       )
       .lean()

@@ -7,6 +7,7 @@ import {
   IsString,
   Max,
   Min,
+  Matches,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -50,6 +51,17 @@ export class UpdateDonorDto {
   @IsOptional()
   weight?: string;
 
+  @IsString()
+  @IsOptional()
+  height?: string; // in cm
+
+  @IsNumber()
+  @Min(10)
+  @Max(60)
+  @Type(() => Number)
+  @IsOptional()
+  bmi?: number; // Auto-calculated or user-provided
+
   @IsEnum(['Male', 'Female', 'Other'])
   @IsOptional()
   gender?: string;
@@ -57,6 +69,43 @@ export class UpdateDonorDto {
   @IsString()
   @IsOptional()
   medicalConditions?: string;
+
+  @IsString()
+  @IsOptional()
+  @Matches(/^\d{1,3}\/\d{1,3}$/, { message: 'Blood pressure must be in format: 120/80' })
+  bloodPressure?: string; // Format: 120/80
+
+  @IsNumber()
+  @Min(7)
+  @Max(20)
+  @Type(() => Number)
+  @IsOptional()
+  hemoglobinLevel?: number; // in g/dL
+
+  @IsString()
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Date must be in format: YYYY-MM-DD' })
+  lastHealthCheckup?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  hasTattooOrPiercing?: boolean;
+
+  @IsString()
+  @IsOptional()
+  tattooOrPiercingDetails?: string;
+
+  @IsString()
+  @IsOptional()
+  currentMedications?: string;
+
+  @IsString()
+  @IsOptional()
+  allergies?: string;
+
+  @IsString()
+  @IsOptional()
+  dietaryRestrictions?: string;
 
   @IsString()
   @IsOptional()
@@ -69,6 +118,13 @@ export class UpdateDonorDto {
   @IsEnum(['Free', 'Paid'])
   @IsOptional()
   status?: string;
+
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  @Max(100)
+  @Type(() => Number)
+  serviceFee?: number; // Donation service fee in currency units (e.g., USD)
 
   @IsString()
   @IsOptional()
