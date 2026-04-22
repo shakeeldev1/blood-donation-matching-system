@@ -14,7 +14,7 @@ import { PaymentService } from './payment.service';
 import { CreatePaymentIntentDto, ConfirmPaymentDto } from './dto/payment.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
-@Controller('api/payments')
+@Controller(['api/payments', 'payments'])
 export class PaymentController {
   constructor(private readonly paymentService: PaymentService) {}
 
