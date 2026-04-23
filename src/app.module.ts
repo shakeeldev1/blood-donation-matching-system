@@ -10,6 +10,7 @@ import { DonorModule } from './donor/donor.module';
 import { AdminModule } from './admin/admin.module';
 import { ChatModule } from './chat/chat.module';
 import { PaymentModule } from './payment/payment.module';
+import { ChatbotModule } from './chatbot/chatbot.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { PaymentModule } from './payment/payment.module';
     AdminModule,
     ChatModule,
     PaymentModule,
+    ChatbotModule,
   ],
   controllers: [AppController],
   providers: [AppService],

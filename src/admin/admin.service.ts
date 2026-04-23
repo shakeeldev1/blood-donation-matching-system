@@ -1,25 +1,305 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Donor } from '../donor/schemas/donor.schema';
 import { User } from '../user/schemas/user.schema';
+import { AdminRequest } from './schemas/admin-request.schema';
+import { AdminComplaint } from './schemas/admin-complaint.schema';
+import { AdminRecipient } from './schemas/admin-recipient.schema';
+import { AdminInventory } from './schemas/admin-inventory.schema';
+import { AdminCampaign } from './schemas/admin-campaign.schema';
+
+type RequestStatus = 'Pending' | 'Approved' | 'Rejected';
+type ComplaintStatus = 'Pending' | 'Resolved' | 'Rejected';
+type RecipientStatus = 'Active' | 'Inactive';
 
 @Injectable()
-export class AdminService {
+export class AdminService implements OnModuleInit {
+  private requestsCache: Array<{
+    id: string;
+    patient: string;
+    hospital: string;
+    phone: string;
+    reason: string;
+    bloodType: string;
+    quantity: number;
+    urgency: string;
+    status: RequestStatus;
+    createdAt: string;
+  }> = [];
+
+  private complaintsCache: Array<{
+    id: string;
+    from: string;
+    subject: string;
+    category: string;
+    priority: string;
+    status: ComplaintStatus;
+    description: string;
+    createdDate: string;
+    resolution?: string;
+    email?: string;
+    phone?: string;
+  }> = [];
+
+  private recipientsCache: Array<{
+    id: string;
+    name: string;
+    age: number;
+    gender: string;
+    bloodType: string;
+    hospital: string;
+    city: string;
+    phone: string;
+    status: RecipientStatus;
+    requestDate: string;
+  }> = [];
+
+  private inventoryCache: Array<{
+    bloodType: string;
+    available: number;
+    reserved: number;
+    expired: number;
+    lastUpdated: string;
+  }> = [];
+
+  private campaignsCache: Array<{
+    id: string;
+    name: string;
+    description: string;
+    startDate: string;
+    endDate: string;
+    status: string;
+    participantsCount: number;
+    targetCount: number;
+  }> = [];
+
   constructor(
     @InjectModel(Donor.name) private donorModel: Model<Donor>,
     @InjectModel(User.name) private userModel: Model<User>,
+    @InjectModel(AdminRequest.name) private requestModel: Model<AdminRequest>,
+    @InjectModel(AdminComplaint.name) private complaintModel: Model<AdminComplaint>,
+    @InjectModel(AdminRecipient.name) private recipientModel: Model<AdminRecipient>,
+    @InjectModel(AdminInventory.name) private inventoryModel: Model<AdminInventory>,
+    @InjectModel(AdminCampaign.name) private campaignModel: Model<AdminCampaign>,
   ) {}
 
+  async onModuleInit() {
+    await this.refreshCaches();
+  }
+
+  private async refreshCaches() {
+    const [requests, complaints, recipients, inventory, campaigns] = await Promise.all([
+      this.requestModel.find().sort({ createdAt: -1 }).lean(),
+      this.complaintModel.find().sort({ createdAt: -1 }).lean(),
+      this.recipientModel.find().sort({ createdAt: -1 }).lean(),
+      this.inventoryModel.find().sort({ bloodType: 1 }).lean(),
+      this.campaignModel.find().sort({ createdAt: -1 }).lean(),
+    ]);
+
+    this.requestsCache = requests.map((request: any) => ({
+      id: String(request._id),
+      patient: request.patient,
+      hospital: request.hospital,
+      phone: request.phone ?? 'N/A',
+      reason: request.reason ?? '',
+      bloodType: request.bloodType,
+      quantity: Number(request.quantity ?? 0),
+      urgency: request.urgency,
+      status: request.status,
+      createdAt: new Date(request.createdAt).toISOString(),
+    }));
+
+    this.complaintsCache = complaints.map((complaint: any) => ({
+      id: String(complaint._id),
+      from: complaint.from,
+      subject: complaint.subject,
+      category: complaint.category,
+      priority: complaint.priority,
+      status: complaint.status,
+      description: complaint.description ?? '',
+      createdDate: new Date(complaint.createdAt).toISOString(),
+      resolution: complaint.resolution,
+      email: complaint.email,
+      phone: complaint.phone,
+    }));
+
+    this.recipientsCache = recipients.map((recipient: any) => ({
+      id: String(recipient._id),
+      name: recipient.name,
+      age: Number(recipient.age ?? 0),
+      gender: recipient.gender,
+      bloodType: recipient.bloodType,
+      hospital: recipient.hospital,
+      city: recipient.city,
+      phone: recipient.phone,
+      status: recipient.status,
+      requestDate: recipient.requestDate ?? new Date(recipient.createdAt).toISOString(),
+    }));
+
+    this.inventoryCache = inventory.map((item: any) => ({
+      bloodType: item.bloodType,
+      available: Number(item.available ?? 0),
+      reserved: Number(item.reserved ?? 0),
+      expired: Number(item.expired ?? 0),
+      lastUpdated: item.lastUpdated ?? new Date(item.updatedAt ?? item.createdAt).toISOString(),
+    }));
+
+    this.campaignsCache = campaigns.map((campaign: any) => ({
+      id: String(campaign._id),
+      name: campaign.name,
+      description: campaign.description ?? '',
+      startDate: campaign.startDate ?? '',
+      endDate: campaign.endDate ?? '',
+      status: campaign.status,
+      participantsCount: Number(campaign.participantsCount ?? 0),
+      targetCount: Number(campaign.targetCount ?? 0),
+    }));
+  }
+
+  private paginate<T>(items: T[], page = 1, limit = 10) {
+    const safePage = Number.isFinite(page) && page > 0 ? page : 1;
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? limit : 10;
+    const skip = (safePage - 1) * safeLimit;
+
+    return {
+      rows: items.slice(skip, skip + safeLimit),
+      total: items.length,
+      page: safePage,
+      limit: safeLimit,
+    };
+  }
+
+  private async buildDonationChart() {
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - 6);
+
+    const donorDocs = await this.donorModel.find({ createdAt: { $gte: startDate } }).select('createdAt').lean();
+    const counts = new Map<string, number>();
+
+    donorDocs.forEach((doc: any) => {
+      const dateKey = new Date(doc.createdAt).toISOString().split('T')[0];
+      counts.set(dateKey, (counts.get(dateKey) ?? 0) + 1);
+    });
+
+    return Array.from({ length: 7 }, (_, index) => {
+      const date = new Date();
+      date.setDate(date.getDate() - (6 - index));
+      const dateKey = date.toISOString().split('T')[0];
+      return { date: dateKey, count: counts.get(dateKey) ?? 0 };
+    });
+  }
+
+  private async buildDemandChart() {
+    const requestDocs = await this.requestModel.find().select('bloodType quantity').lean();
+    const counts = new Map<string, number>();
+
+    requestDocs.forEach((doc: any) => {
+      counts.set(doc.bloodType, (counts.get(doc.bloodType) ?? 0) + Number(doc.quantity ?? 0));
+    });
+
+    const bloodTypes = this.inventoryCache.length > 0 ? this.inventoryCache.map((item) => item.bloodType) : ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'];
+    return bloodTypes.map((bloodType) => ({
+      bloodType,
+      needed: counts.get(bloodType) ?? 0,
+    }));
+  }
+
+  private buildNotifications() {
+    const notifications = [
+      ...this.inventoryCache.filter((item) => item.available < 10).map((item) => ({
+        id: `inventory-${item.bloodType}`,
+        title: 'Low Blood Stock',
+        message: `${item.bloodType} blood stock is critically low`,
+        type: 'error' as const,
+        read: false,
+        createdAt: item.lastUpdated,
+      })),
+      ...this.requestsCache.filter((request) => request.status === 'Pending').slice(0, 5).map((request) => ({
+        id: `request-${request.id}`,
+        title: 'New Blood Request',
+        message: `${request.hospital} requested ${request.bloodType} blood units`,
+        type: 'warning' as const,
+        read: false,
+        createdAt: request.createdAt,
+      })),
+      ...this.complaintsCache.filter((complaint) => complaint.status === 'Pending').slice(0, 5).map((complaint) => ({
+        id: `complaint-${complaint.id}`,
+        title: 'Pending Complaint',
+        message: complaint.subject,
+        type: 'warning' as const,
+        read: false,
+        createdAt: complaint.createdDate,
+      })),
+    ].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+
+    return {
+      notifications,
+      unreadCount: notifications.filter((notification) => !notification.read).length,
+    };
+  }
+
+  private buildReportSummaries() {
+    const totalRequests = this.requestsCache.length;
+    const pendingRequests = this.requestsCache.filter((request) => request.status === 'Pending').length;
+    const totalUnits = this.inventoryCache.reduce((sum, item) => sum + item.available, 0);
+    const openComplaints = this.complaintsCache.filter((complaint) => complaint.status === 'Pending').length;
+    const hasData = totalRequests > 0 || totalUnits > 0 || this.complaintsCache.length > 0 || this.campaignsCache.length > 0;
+
+    if (!hasData) {
+      return [];
+    }
+
+    return [
+      {
+        id: 'requests-summary',
+        title: 'Request Summary Report',
+        generatedDate: new Date().toISOString(),
+        type: 'Requests',
+        status: 'Completed',
+      },
+      {
+        id: 'inventory-summary',
+        title: 'Blood Inventory Report',
+        generatedDate: new Date().toISOString(),
+        type: 'Inventory',
+        status: 'Completed',
+      },
+      {
+        id: 'complaints-summary',
+        title: 'Complaint Summary Report',
+        generatedDate: new Date().toISOString(),
+        type: 'Complaints',
+        status: 'Completed',
+      },
+      {
+        id: 'campaign-summary',
+        title: 'Campaign Overview Report',
+        generatedDate: new Date().toISOString(),
+        type: 'Campaigns',
+        status: 'Completed',
+      },
+    ].map((report) => ({
+      ...report,
+      status: report.status,
+      content: `Requests: ${totalRequests}, Pending: ${pendingRequests}, Units: ${totalUnits}, Open complaints: ${openComplaints}`,
+    }));
+  }
+
   async getDashboardStats() {
-    const totalDonors = await this.donorModel.countDocuments();
-    const activeDonors = await this.donorModel.countDocuments({ status: 'active' });
-    const inactiveDonors = totalDonors - activeDonors;
-    
-    // Mock data for requests and inventory
-    const totalRequests = Math.floor(Math.random() * 100) + 50;
-    const pendingRequests = Math.floor(Math.random() * 20) + 5;
-    const availableUnits = Math.floor(Math.random() * 500) + 100;
+    await this.refreshCaches();
+
+    const [totalDonors, activeDonors, recentDonors, donationChart, demandChart] = await Promise.all([
+      this.donorModel.countDocuments(),
+      this.donorModel.countDocuments({ availability: true }),
+      this.donorModel.find().sort({ createdAt: -1 }).limit(5).lean(),
+      this.buildDonationChart(),
+      this.buildDemandChart(),
+    ]);
+
+    const totalRequests = this.requestsCache.length;
+    const pendingRequests = this.requestsCache.filter((request) => request.status === 'Pending').length;
+    const availableUnits = this.inventoryCache.reduce((sum, item) => sum + item.available, 0);
 
     return {
       stats: {
@@ -28,134 +308,43 @@ export class AdminService {
         pendingRequests,
         availableUnits,
         activeDonors,
-        inactiveDonors,
+        inactiveDonors: Math.max(0, totalDonors - activeDonors),
       },
-      recentDonors: [],
+      recentDonors: recentDonors.map((donor: any) => ({
+        _id: donor._id,
+        name: donor.name,
+        email: donor.email,
+        phone: donor.phone,
+        bloodType: donor.bloodGroup,
+        city: donor.city,
+        address: donor.address,
+        status: donor.availability ? 'active' : 'inactive',
+        image: donor.image,
+        donationType: donor.donationType,
+        rating: donor.rating,
+      })),
       chartData: {
-        donations: this.generateDonationChart(),
-        demand: this.generateDemandChart(),
+        donations: donationChart,
+        demand: demandChart,
       },
     };
   }
 
-  async getComplaints(page: number = 1, limit: number = 10) {
-    // Mock complaints data
-    const complaints = [
-      {
-        id: 1,
-        from: 'john@example.com',
-        subject: 'Donation Process Too Long',
-        category: 'Process',
-        priority: 'High',
-        status: 'Open',
-        createdDate: new Date(Date.now() - 86400000).toISOString(),
-      },
-      {
-        id: 2,
-        from: 'mary@example.com',
-        subject: 'Equipment Malfunction',
-        category: 'Equipment',
-        priority: 'Critical',
-        status: 'In Progress',
-        createdDate: new Date(Date.now() - 172800000).toISOString(),
-      },
-      {
-        id: 3,
-        from: 'sarah@example.com',
-        subject: 'Staff Behavior Issue',
-        category: 'Staff',
-        priority: 'Medium',
-        status: 'Resolved',
-        createdDate: new Date(Date.now() - 259200000).toISOString(),
-      },
-      {
-        id: 4,
-        from: 'david@example.com',
-        subject: 'Poor Facility Maintenance',
-        category: 'Facility',
-        priority: 'Medium',
-        status: 'Open',
-        createdDate: new Date(Date.now() - 345600000).toISOString(),
-      },
-      {
-        id: 5,
-        from: 'emma@example.com',
-        subject: 'Communication Delay',
-        category: 'Communication',
-        priority: 'Low',
-        status: 'Open',
-        createdDate: new Date(Date.now() - 432000000).toISOString(),
-      },
-    ];
-
-    const skip = (page - 1) * limit;
-    const paginatedComplaints = complaints.slice(skip, skip + limit);
-
-    return {
-      complaints: paginatedComplaints,
-      total: complaints.length,
-      page,
-      limit,
-    };
+  async getComplaints(page = 1, limit = 10) {
+    await this.refreshCaches();
+    const { rows, total, page: currentPage, limit: currentLimit } = this.paginate(this.complaintsCache, page, limit);
+    return { complaints: rows, total, page: currentPage, limit: currentLimit };
   }
 
-  async getReports(page: number = 1, limit: number = 10) {
-    const reports = [
-      {
-        id: '1',
-        title: 'Monthly Donation Report',
-        generatedDate: new Date().toISOString(),
-        type: 'Donation',
-        status: 'Completed',
-      },
-      {
-        id: '2',
-        title: 'Blood Inventory Report',
-        generatedDate: new Date(Date.now() - 86400000).toISOString(),
-        type: 'Inventory',
-        status: 'Completed',
-      },
-      {
-        id: '3',
-        title: 'Donor Analytics Report',
-        generatedDate: new Date(Date.now() - 172800000).toISOString(),
-        type: 'Analytics',
-        status: 'Completed',
-      },
-      {
-        id: '4',
-        title: 'Request Fulfillment Report',
-        generatedDate: new Date(Date.now() - 259200000).toISOString(),
-        type: 'Request',
-        status: 'Completed',
-      },
-      {
-        id: '5',
-        title: 'Compliance Report',
-        generatedDate: new Date(Date.now() - 345600000).toISOString(),
-        type: 'Compliance',
-        status: 'Completed',
-      },
-    ];
-
-    const skip = (page - 1) * limit;
-    const paginatedReports = reports.slice(skip, skip + limit);
-
-    return {
-      reports: paginatedReports,
-      total: reports.length,
-      page,
-      limit,
-    };
+  async getReports(page = 1, limit = 10) {
+    await this.refreshCaches();
+    const reports = this.buildReportSummaries();
+    const { rows, total, page: currentPage, limit: currentLimit } = this.paginate(reports, page, limit);
+    return { reports: rows, total, page: currentPage, limit: currentLimit };
   }
 
-  async getDonors(page: number = 1, limit: number = 10) {
-    const donors = await this.donorModel
-      .find()
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
-
+  async getDonors(page = 1, limit = 10) {
+    const donors = await this.donorModel.find().sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean();
     const total = await this.donorModel.countDocuments();
 
     return {
@@ -166,7 +355,10 @@ export class AdminService {
         phone: donor.phone,
         bloodType: donor.bloodGroup,
         city: donor.city,
-        status: donor.status || 'active',
+        status: donor.availability ? 'Active' : 'Inactive',
+        address: donor.address,
+        donationType: donor.donationType,
+        image: donor.image,
       })),
       total,
       page,
@@ -174,292 +366,250 @@ export class AdminService {
     };
   }
 
-  async getRequests(page: number = 1, limit: number = 10) {
-    const requests = [
-      {
-        id: '1',
-        hospital: 'City Hospital',
-        bloodType: 'O-',
-        quantity: 10,
-        urgency: 'Critical',
-        status: 'Pending',
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: '2',
-        hospital: 'Central Medical Center',
-        bloodType: 'A+',
-        quantity: 5,
-        urgency: 'High',
-        status: 'Fulfilled',
-        createdAt: new Date(Date.now() - 86400000).toISOString(),
-      },
-      {
-        id: '3',
-        hospital: 'County General',
-        bloodType: 'B-',
-        quantity: 8,
-        urgency: 'Medium',
-        status: 'Pending',
-        createdAt: new Date(Date.now() - 172800000).toISOString(),
-      },
-      {
-        id: '4',
-        hospital: 'St. Mary\'s Hospital',
-        bloodType: 'AB+',
-        quantity: 3,
-        urgency: 'Low',
-        status: 'Fulfilled',
-        createdAt: new Date(Date.now() - 259200000).toISOString(),
-      },
-      {
-        id: '5',
-        hospital: 'University Hospital',
-        bloodType: 'O+',
-        quantity: 12,
-        urgency: 'Critical',
-        status: 'In Progress',
-        createdAt: new Date(Date.now() - 345600000).toISOString(),
-      },
-    ];
-
-    const skip = (page - 1) * limit;
-    const paginatedRequests = requests.slice(skip, skip + limit);
-
-    return {
-      requests: paginatedRequests,
-      total: requests.length,
-      page,
-      limit,
-    };
+  async createDonor(payload: { name: string; email: string; phone: string; bloodType: string; city?: string; address?: string }) {
+    return this.donorModel.create({
+      userId: new Types.ObjectId(),
+      name: payload.name,
+      email: payload.email,
+      phone: payload.phone,
+      address: payload.address ?? payload.city ?? 'Unknown',
+      city: payload.city ?? 'Unknown',
+      bloodGroup: payload.bloodType,
+      donationType: 'Blood',
+      age: 30,
+      weight: '70',
+      gender: 'Other',
+      availability: true,
+      status: 'Free',
+    });
   }
 
-  async getRecipients(page: number = 1, limit: number = 10) {
-    const recipients = [
-      {
-        id: '1',
-        name: 'John Smith',
-        email: 'john@example.com',
-        bloodType: 'O-',
-        hospital: 'City Hospital',
-        status: 'Active',
-        requestDate: new Date().toISOString(),
-      },
-      {
-        id: '2',
-        name: 'Mary Johnson',
-        email: 'mary@example.com',
-        bloodType: 'A+',
-        hospital: 'Central Medical',
-        status: 'Inactive',
-        requestDate: new Date(Date.now() - 86400000).toISOString(),
-      },
-      {
-        id: '3',
-        name: 'Robert Brown',
-        email: 'robert@example.com',
-        bloodType: 'B-',
-        hospital: 'County General',
-        status: 'Active',
-        requestDate: new Date(Date.now() - 172800000).toISOString(),
-      },
-      {
-        id: '4',
-        name: 'Sarah Davis',
-        email: 'sarah@example.com',
-        bloodType: 'AB+',
-        hospital: 'St. Mary\'s',
-        status: 'Active',
-        requestDate: new Date(Date.now() - 259200000).toISOString(),
-      },
-      {
-        id: '5',
-        name: 'Michael Wilson',
-        email: 'michael@example.com',
-        bloodType: 'O+',
-        hospital: 'University Hospital',
-        status: 'Active',
-        requestDate: new Date(Date.now() - 345600000).toISOString(),
-      },
-    ];
+  async updateDonor(id: string, payload: { name?: string; email?: string; phone?: string; bloodType?: string; city?: string; address?: string; status?: 'Active' | 'Inactive' }) {
+    const donor = await this.donorModel.findById(id);
+    if (!donor) {
+      return null;
+    }
 
-    const skip = (page - 1) * limit;
-    const paginatedRecipients = recipients.slice(skip, skip + limit);
+    if (payload.name !== undefined) donor.name = payload.name;
+    if (payload.email !== undefined) donor.email = payload.email;
+    if (payload.phone !== undefined) donor.phone = payload.phone;
+    if (payload.bloodType !== undefined) donor.bloodGroup = payload.bloodType;
+    if (payload.city !== undefined) donor.city = payload.city;
+    if (payload.address !== undefined) donor.address = payload.address;
+    if (payload.status !== undefined) donor.availability = payload.status === 'Active';
 
-    return {
-      recipients: paginatedRecipients,
-      total: recipients.length,
-      page,
-      limit,
-    };
+    await donor.save();
+    return donor;
   }
 
-  async getCampaigns(page: number = 1, limit: number = 10) {
-    const campaigns = [
-      {
-        id: '1',
-        name: 'Spring Blood Drive 2026',
-        description: 'Annual spring blood donation campaign',
-        startDate: new Date(Date.now() - 604800000).toISOString(),
-        endDate: new Date(Date.now() + 604800000).toISOString(),
-        status: 'Active',
-        participantsCount: 245,
-        targetCount: 500,
-      },
-      {
-        id: '2',
-        name: 'University Campus Drive',
-        description: 'Blood drive at local university',
-        startDate: new Date(Date.now() - 1209600000).toISOString(),
-        endDate: new Date(Date.now() - 604800000).toISOString(),
-        status: 'Completed',
-        participantsCount: 180,
-        targetCount: 200,
-      },
-      {
-        id: '3',
-        name: 'Corporate Partnership Drive',
-        description: 'Blood drive with local companies',
-        startDate: new Date(Date.now() + 604800000).toISOString(),
-        endDate: new Date(Date.now() + 1814400000).toISOString(),
-        status: 'Upcoming',
-        participantsCount: 0,
-        targetCount: 300,
-      },
-    ];
+  async toggleDonorStatus(id: string) {
+    const donor = await this.donorModel.findById(id);
+    if (!donor) {
+      return null;
+    }
 
-    const skip = (page - 1) * limit;
-    const paginatedCampaigns = campaigns.slice(skip, skip + limit);
+    donor.availability = !donor.availability;
+    await donor.save();
+    return donor;
+  }
 
-    return {
-      campaigns: paginatedCampaigns,
-      total: campaigns.length,
-      page,
-      limit,
-    };
+  async deleteDonor(id: string) {
+    const result = await this.donorModel.deleteOne({ _id: id });
+    return { deleted: result.deletedCount > 0 };
+  }
+
+  async getRequests(page = 1, limit = 10) {
+    await this.refreshCaches();
+    const { rows, total, page: currentPage, limit: currentLimit } = this.paginate(this.requestsCache, page, limit);
+    return { requests: rows, total, page: currentPage, limit: currentLimit };
+  }
+
+  async createRequest(payload: { patient: string; hospital: string; bloodType: string; quantity: number; urgency: string; phone?: string; reason?: string }) {
+    const created = await this.requestModel.create({
+      patient: payload.patient,
+      hospital: payload.hospital,
+      bloodType: payload.bloodType,
+      quantity: payload.quantity,
+      urgency: payload.urgency,
+      phone: payload.phone ?? 'N/A',
+      reason: payload.reason ?? '',
+      status: 'Pending',
+    });
+
+    await this.refreshCaches();
+    return created;
+  }
+
+  async updateRequest(id: string, payload: { patient?: string; hospital?: string; bloodType?: string; quantity?: number; urgency?: string; phone?: string; reason?: string }) {
+    const updated = await this.requestModel.findByIdAndUpdate(
+      id,
+      {
+        ...(payload.patient !== undefined ? { patient: payload.patient } : {}),
+        ...(payload.hospital !== undefined ? { hospital: payload.hospital } : {}),
+        ...(payload.bloodType !== undefined ? { bloodType: payload.bloodType } : {}),
+        ...(payload.quantity !== undefined ? { quantity: payload.quantity } : {}),
+        ...(payload.urgency !== undefined ? { urgency: payload.urgency } : {}),
+        ...(payload.phone !== undefined ? { phone: payload.phone } : {}),
+        ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
+      },
+      { new: true },
+    ).lean();
+
+    await this.refreshCaches();
+    return updated;
+  }
+
+  async updateRequestStatus(id: string, status: RequestStatus) {
+    const updated = await this.requestModel.findByIdAndUpdate(id, { status }, { new: true }).lean();
+    await this.refreshCaches();
+    return updated;
+  }
+
+  async deleteRequest(id: string) {
+    const result = await this.requestModel.deleteOne({ _id: id });
+    await this.refreshCaches();
+    return { deleted: result.deletedCount > 0 };
+  }
+
+  async getRecipients(page = 1, limit = 10) {
+    await this.refreshCaches();
+    const { rows, total, page: currentPage, limit: currentLimit } = this.paginate(this.recipientsCache, page, limit);
+    return { recipients: rows, total, page: currentPage, limit: currentLimit };
+  }
+
+  async createRecipient(payload: { name: string; age?: number; gender?: string; bloodType: string; hospital: string; city?: string; phone?: string; status?: RecipientStatus }) {
+    const created = await this.recipientModel.create({
+      name: payload.name,
+      age: payload.age ?? 30,
+      gender: payload.gender ?? 'Other',
+      bloodType: payload.bloodType,
+      hospital: payload.hospital,
+      city: payload.city ?? 'Unknown',
+      phone: payload.phone ?? 'N/A',
+      status: payload.status ?? 'Active',
+      requestDate: new Date().toISOString(),
+    });
+
+    await this.refreshCaches();
+    return created;
+  }
+
+  async updateRecipient(id: string, payload: { name?: string; age?: number; gender?: string; bloodType?: string; hospital?: string; city?: string; phone?: string; status?: RecipientStatus }) {
+    const updated = await this.recipientModel.findByIdAndUpdate(
+      id,
+      {
+        ...(payload.name !== undefined ? { name: payload.name } : {}),
+        ...(payload.age !== undefined ? { age: payload.age } : {}),
+        ...(payload.gender !== undefined ? { gender: payload.gender } : {}),
+        ...(payload.bloodType !== undefined ? { bloodType: payload.bloodType } : {}),
+        ...(payload.hospital !== undefined ? { hospital: payload.hospital } : {}),
+        ...(payload.city !== undefined ? { city: payload.city } : {}),
+        ...(payload.phone !== undefined ? { phone: payload.phone } : {}),
+        ...(payload.status !== undefined ? { status: payload.status } : {}),
+      },
+      { new: true },
+    ).lean();
+
+    await this.refreshCaches();
+    return updated;
+  }
+
+  async toggleRecipientStatus(id: string) {
+    const recipient = await this.recipientModel.findById(id).lean();
+    if (!recipient) {
+      return null;
+    }
+
+    const nextStatus: RecipientStatus = recipient.status === 'Active' ? 'Inactive' : 'Active';
+    const updated = await this.recipientModel.findByIdAndUpdate(id, { status: nextStatus }, { new: true }).lean();
+    await this.refreshCaches();
+    return updated;
+  }
+
+  async deleteRecipient(id: string) {
+    const result = await this.recipientModel.deleteOne({ _id: id });
+    await this.refreshCaches();
+    return { deleted: result.deletedCount > 0 };
+  }
+
+  async getCampaigns(page = 1, limit = 10) {
+    await this.refreshCaches();
+    const { rows, total, page: currentPage, limit: currentLimit } = this.paginate(this.campaignsCache, page, limit);
+    return { campaigns: rows, total, page: currentPage, limit: currentLimit };
   }
 
   async getInventory() {
-    const inventory = [
-      {
-        bloodType: 'O+',
-        available: 45,
-        reserved: 10,
-        expired: 2,
-        lastUpdated: new Date().toISOString(),
-      },
-      {
-        bloodType: 'O-',
-        available: 38,
-        reserved: 8,
-        expired: 1,
-        lastUpdated: new Date().toISOString(),
-      },
-      {
-        bloodType: 'A+',
-        available: 32,
-        reserved: 5,
-        expired: 0,
-        lastUpdated: new Date().toISOString(),
-      },
-      {
-        bloodType: 'A-',
-        available: 28,
-        reserved: 4,
-        expired: 1,
-        lastUpdated: new Date().toISOString(),
-      },
-      {
-        bloodType: 'B+',
-        available: 25,
-        reserved: 3,
-        expired: 0,
-        lastUpdated: new Date().toISOString(),
-      },
-      {
-        bloodType: 'B-',
-        available: 20,
-        reserved: 2,
-        expired: 2,
-        lastUpdated: new Date().toISOString(),
-      },
-      {
-        bloodType: 'AB+',
-        available: 15,
-        reserved: 1,
-        expired: 0,
-        lastUpdated: new Date().toISOString(),
-      },
-      {
-        bloodType: 'AB-',
-        available: 10,
-        reserved: 0,
-        expired: 1,
-        lastUpdated: new Date().toISOString(),
-      },
-    ];
+    await this.refreshCaches();
+    return { inventory: this.inventoryCache };
+  }
 
-    return { inventory };
+  async adjustInventoryUnits(bloodType: string, delta: number) {
+    const existing = await this.inventoryModel.findOne({ bloodType }).lean();
+
+    if (!existing && delta < 0) {
+      return null;
+    }
+
+    if (!existing) {
+      const created = await this.inventoryModel.create({
+        bloodType,
+        available: Math.max(0, delta),
+        reserved: 0,
+        expired: 0,
+        lastUpdated: new Date().toISOString(),
+      });
+
+      await this.refreshCaches();
+      return created;
+    }
+
+    const updated = await this.inventoryModel.findOneAndUpdate(
+      { bloodType },
+      {
+        available: Math.max(0, Number(existing.available ?? 0) + delta),
+        lastUpdated: new Date().toISOString(),
+      },
+      { new: true },
+    ).lean();
+
+    await this.refreshCaches();
+    return updated;
   }
 
   async getNotifications() {
-    const notifications = [
-      {
-        id: '1',
-        title: 'New Blood Request',
-        message: 'City Hospital requested O- blood units',
-        type: 'warning' as const,
-        read: false,
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: '2',
-        title: 'Donation Campaign Started',
-        message: 'University donation campaign is now live',
-        type: 'success' as const,
-        read: false,
-        createdAt: new Date(Date.now() - 3600000).toISOString(),
-      },
-      {
-        id: '3',
-        title: 'Low Blood Stock',
-        message: 'AB- blood type stock is critically low',
-        type: 'error' as const,
-        read: true,
-        createdAt: new Date(Date.now() - 7200000).toISOString(),
-      },
-      {
-        id: '4',
-        title: 'System Update',
-        message: 'Scheduled maintenance completed successfully',
-        type: 'info' as const,
-        read: true,
-        createdAt: new Date(Date.now() - 86400000).toISOString(),
-      },
-    ];
-
-    const unreadCount = notifications.filter((n) => !n.read).length;
-
-    return { notifications, unreadCount };
+    await this.refreshCaches();
+    return this.buildNotifications();
   }
 
-  private generateDonationChart(): Array<{ date: string; count: number }> {
-    const data: Array<{ date: string; count: number }> = [];
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date(Date.now() - i * 86400000);
-      data.push({
-        date: date.toISOString().split('T')[0],
-        count: Math.floor(Math.random() * 15) + 5,
-      });
+  async updateComplaintStatus(id: string, payload: { status: ComplaintStatus; resolution?: string }) {
+    const updated = await this.complaintModel.findByIdAndUpdate(
+      id,
+      {
+        status: payload.status,
+        ...(payload.resolution !== undefined ? { resolution: payload.resolution } : {}),
+      },
+      { new: true },
+    ).lean();
+
+    await this.refreshCaches();
+    return updated;
+  }
+
+  async deleteComplaint(id: string) {
+    const result = await this.complaintModel.deleteOne({ _id: id });
+    await this.refreshCaches();
+    return { deleted: result.deletedCount > 0 };
+  }
+
+  async exportReports(format: 'json' | 'csv' = 'json') {
+    const reports = this.buildReportSummaries();
+
+    if (format === 'csv') {
+      const header = 'id,title,type,status,generatedDate';
+      const rows = reports.map((report) => `${report.id},"${report.title.replace(/"/g, '""')}",${report.type},${report.status},${report.generatedDate}`);
+      return { format: 'csv', content: [header, ...rows].join('\n') };
     }
-    return data;
-  }
 
-  private generateDemandChart(): Array<{ bloodType: string; needed: number }> {
-    const bloodTypes = ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'];
-    return bloodTypes.map((type) => ({
-      bloodType: type,
-      needed: Math.floor(Math.random() * 20) + 5,
-    }));
+    return { format: 'json', reports };
   }
 }
