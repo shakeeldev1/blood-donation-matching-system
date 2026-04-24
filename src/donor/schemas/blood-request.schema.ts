@@ -24,13 +24,20 @@ export class BloodRequest extends Document {
   @Prop({ required: true })
   city!: string;
 
-  @Prop({ required: true, enum: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] })
+  @Prop({
+    required: true,
+    enum: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'],
+  })
   bloodGroup!: string;
 
   @Prop({ required: true, min: 1 })
   units!: number;
 
-  @Prop({ required: true, enum: ['Critical', 'High', 'Moderate'], default: 'Moderate' })
+  @Prop({
+    required: true,
+    enum: ['Critical', 'High', 'Moderate'],
+    default: 'Moderate',
+  })
   urgency!: 'Critical' | 'High' | 'Moderate';
 
   @Prop({ required: true })

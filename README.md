@@ -31,6 +31,22 @@
 $ npm install
 ```
 
+## Chatbot Configuration
+
+The chatbot now uses a hybrid flow:
+
+- Database-backed answers for operational questions (for example donor counts and urgent active requests)
+- OpenAI for general conversational questions
+- ML service fallback when OpenAI is unavailable
+
+Set the following environment variables (see `.env.example`):
+
+```bash
+OPENAI_API_KEY=your_key_here
+OPENAI_MODEL=gpt-4.1-mini
+ML_SERVICE_URL=http://127.0.0.1:5001
+```
+
 ## Compile and run the project
 
 ```bash

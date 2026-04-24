@@ -19,4 +19,5 @@ export class AdminInventory extends Document {
   lastUpdated?: string;
 }
 
-export const AdminInventorySchema = SchemaFactory.createForClass(AdminInventory);
+export const AdminInventorySchema =
+  SchemaFactory.createForClass(AdminInventory);

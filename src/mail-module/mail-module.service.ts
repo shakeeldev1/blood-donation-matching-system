@@ -5,9 +5,9 @@ import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class MailModuleService {
-    private transporter: nodemailer.Transporter;
+  private transporter: nodemailer.Transporter;
 
-    constructor(private configService: ConfigService) {
+  constructor(private configService: ConfigService) {
     const host = this.configService.get<string>('MAIL_HOST');
     const port = Number(this.configService.get<string>('MAIL_PORT'));
     const user = this.configService.get<string>('MAIL_USER');
@@ -19,18 +19,18 @@ export class MailModuleService {
       );
     }
 
-        this.transporter = nodemailer.createTransport({
+    this.transporter = nodemailer.createTransport({
       host,
       port,
-            secure: false,
-            auth: {
+      secure: false,
+      auth: {
         user,
         pass,
-            },
-        });
-    }
+      },
+    });
+  }
 
-    async sendBloodRequestCreatedEmail(
+  async sendBloodRequestCreatedEmail(
     to: string,
     data: {
       requesterName: string;
@@ -47,7 +47,11 @@ export class MailModuleService {
     const appName = 'Blood Donation System';
     const supportEmail = this.configService.get('MAIL_USER');
     const urgencyColor =
-      data.urgency === 'Critical' ? '#c62828' : data.urgency === 'High' ? '#e65100' : '#2e7d32';
+      data.urgency === 'Critical'
+        ? '#c62828'
+        : data.urgency === 'High'
+          ? '#e65100'
+          : '#2e7d32';
 
     try {
       await this.transporter.sendMail({
@@ -117,13 +121,18 @@ export class MailModuleService {
       Closed: '#616161',
     };
     const statusMessage: Record<string, string> = {
-      Accepted: 'A donor has <strong>accepted</strong> your request and will be in touch soon.',
-      Fulfilled: 'Your blood request has been <strong>fulfilled</strong>. Thank you for using our platform!',
+      Accepted:
+        'A donor has <strong>accepted</strong> your request and will be in touch soon.',
+      Fulfilled:
+        'Your blood request has been <strong>fulfilled</strong>. Thank you for using our platform!',
       Closed: 'Your blood request has been <strong>closed</strong>.',
-      Pending: 'Your blood request status has been reset to <strong>Pending</strong>.',
+      Pending:
+        'Your blood request status has been reset to <strong>Pending</strong>.',
     };
     const color = statusColor[data.status] ?? '#333';
-    const message = statusMessage[data.status] ?? `Status changed to <strong>${data.status}</strong>.`;
+    const message =
+      statusMessage[data.status] ??
+      `Status changed to <strong>${data.status}</strong>.`;
 
     try {
       await this.transporter.sendMail({
@@ -167,15 +176,15 @@ export class MailModuleService {
   }
 
   async sendOtpEmail(to: string, otp: string) {
-        const appName = 'Blood Donation System';
-        const supportEmail = this.configService.get('MAIL_USER');
+    const appName = 'Blood Donation System';
+    const supportEmail = this.configService.get('MAIL_USER');
 
-        try {
-          await this.transporter.sendMail({
-            from: `"${appName}" <${supportEmail}>`,
-            to,
-            subject: 'Verify Your Email Address',
-            html: `
+    try {
+      await this.transporter.sendMail({
+        from: `"${appName}" <${supportEmail}>`,
+        to,
+        subject: 'Verify Your Email Address',
+        html: `
     <div style="margin:0;padding:0;background-color:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
       <table align="center" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:40px auto;background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.08);">
         
@@ -218,11 +227,11 @@ export class MailModuleService {
       </table>
     </div>
     `,
-        });
-      } catch {
-        throw new InternalServerErrorException(
-          'Failed to send OTP email. Check SMTP settings in server/.env',
-        );
-      }
+      });
+    } catch {
+      throw new InternalServerErrorException(
+        'Failed to send OTP email. Check SMTP settings in server/.env',
+      );
     }
+  }
 }

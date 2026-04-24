@@ -126,10 +126,7 @@ export class AuthService {
     if (!user || !user.refreshToken) {
       throw new UnauthorizedException('Access denied');
     }
-    const isMatch = await bcrypt.compare(
-      refreshToken,
-      user.refreshToken,
-    );
+    const isMatch = await bcrypt.compare(refreshToken, user.refreshToken);
     if (!isMatch) {
       throw new UnauthorizedException('Invalid refresh token');
     }

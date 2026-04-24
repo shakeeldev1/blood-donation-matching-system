@@ -30,14 +30,15 @@ interface AuthenticatedSocket extends Socket {
   namespace: '/chat',
 })
 export class ChatGateway
-  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer()
   server: Server;
 
   private readonly logger = new Logger(ChatGateway.name);
   private userSockets = new Map<string, Set<string>>();
 
-  constructor(private chatService: ChatService) { }
+  constructor(private chatService: ChatService) {}
 
   afterInit(server: Server) {
     this.logger.log('WebSocket Chat Gateway initialized');
@@ -132,7 +133,9 @@ export class ChatGateway
       const roomId = conversationId.toString();
 
       if (!conversationId) {
-        this.logger.warn(`Join failed - missing conversation ID, socket: ${client.id}`);
+        this.logger.warn(
+          `Join failed - missing conversation ID, socket: ${client.id}`,
+        );
         client.emit('error', { message: 'Conversation ID is required' });
         return;
       }
@@ -153,13 +156,19 @@ export class ChatGateway
         this.logger.error(
           `❌ Access check failed for user ${userId} on conversation ${roomId}: ${error instanceof Error ? error.message : error}`,
         );
-        client.emit('error', { message: 'Conversation not found or access denied' });
+        client.emit('error', {
+          message: 'Conversation not found or access denied',
+        });
         return;
       }
 
       if (!hasAccess) {
-        this.logger.warn(`❌ User ${userId} has no access to conversation ${roomId} (hasAccess=false)`);
-        client.emit('error', { message: 'Conversation not found or access denied' });
+        this.logger.warn(
+          `❌ User ${userId} has no access to conversation ${roomId} (hasAccess=false)`,
+        );
+        client.emit('error', {
+          message: 'Conversation not found or access denied',
+        });
         return;
       }
 
@@ -178,7 +187,9 @@ export class ChatGateway
         timestamp: new Date(),
       });
     } catch (error) {
-      this.logger.error(`❌ Join room error: ${error instanceof Error ? error.message : error}`);
+      this.logger.error(
+        `❌ Join room error: ${error instanceof Error ? error.message : error}`,
+      );
       this.logger.error(`Stack:`, error);
       client.emit('error', {
         message: error instanceof Error ? error.message : 'Failed to join room',
@@ -219,7 +230,8 @@ export class ChatGateway
     } catch (error) {
       this.logger.error(`Leave room error: ${error}`);
       client.emit('error', {
-        message: error instanceof Error ? error.message : 'Failed to leave room',
+        message:
+          error instanceof Error ? error.message : 'Failed to leave room',
       });
     }
   }
@@ -237,8 +249,12 @@ export class ChatGateway
       const roomId = data.conversationId.toString();
 
       if (!data.conversationId || !data.content?.trim()) {
-        this.logger.warn(`[SEND] Validation failed - missing data from user ${userId}`);
-        client.emit('error', { message: 'Conversation ID and content required' });
+        this.logger.warn(
+          `[SEND] Validation failed - missing data from user ${userId}`,
+        );
+        client.emit('error', {
+          message: 'Conversation ID and content required',
+        });
         return;
       }
 
@@ -248,13 +264,14 @@ export class ChatGateway
       }
 
       // Save message to database
-      let message = await this.chatService.sendMessage(data, userId);
+      const message = await this.chatService.sendMessage(data, userId);
       await message.populate('senderId', 'name email');
 
       // Get sender info safely - cast after populate
       const sender = message.senderId as any;
-      const senderName = (sender && sender.name) ? sender.name : 'Unknown';
-      const senderEmail = (sender && sender.email) ? sender.email : client.data.userEmail;
+      const senderName = sender && sender.name ? sender.name : 'Unknown';
+      const senderEmail =
+        sender && sender.email ? sender.email : client.data.userEmail;
 
       const messagePayload = {
         _id: message._id,
@@ -273,10 +290,13 @@ export class ChatGateway
       // Broadcast to all users in the conversation (including sender)
       this.server.to(roomId).emit('messageReceived', messagePayload);
     } catch (error) {
-      this.logger.error(`❌ Send message error: ${error instanceof Error ? error.message : error}`);
+      this.logger.error(
+        `❌ Send message error: ${error instanceof Error ? error.message : error}`,
+      );
       this.logger.error(`Stack:`, error);
       client.emit('error', {
-        message: error instanceof Error ? error.message : 'Failed to send message',
+        message:
+          error instanceof Error ? error.message : 'Failed to send message',
       });
     }
   }
@@ -310,7 +330,8 @@ export class ChatGateway
     } catch (error) {
       this.logger.error(`Mark as read error: ${error}`);
       client.emit('error', {
-        message: error instanceof Error ? error.message : 'Failed to mark as read',
+        message:
+          error instanceof Error ? error.message : 'Failed to mark as read',
       });
     }
   }
@@ -390,10 +411,11 @@ export class ChatGateway
       }
 
       // Get sender info safely - cast after populate
-      const sender = message.senderId as any;
-      const senderName = (sender && sender.name) ? sender.name : 'Unknown';
-      const senderEmail = (sender && sender.email) ? sender.email : 'unknown@email.com';
-      const senderId = (sender && sender._id) ? sender._id : message.senderId;
+      const sender = message.senderId;
+      const senderName = sender && sender.name ? sender.name : 'Unknown';
+      const senderEmail =
+        sender && sender.email ? sender.email : 'unknown@email.com';
+      const senderId = sender && sender._id ? sender._id : message.senderId;
 
       // Use consistent string conversion for room ID
       const roomId = conversationId.toString();

@@ -9,7 +9,11 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Message } from './schemas/message.schema';
 import { Conversation } from './schemas/conversation.schema';
-import { SendMessageDto, CreateConversationDto, MarkAsReadDto } from './dto/chat.dto';
+import {
+  SendMessageDto,
+  CreateConversationDto,
+  MarkAsReadDto,
+} from './dto/chat.dto';
 import { User } from 'src/user/schemas/user.schema';
 import { Donor } from 'src/donor/schemas/donor.schema';
 
@@ -33,7 +37,9 @@ export class ChatService {
     return new Types.ObjectId(value);
   }
 
-  private async getUserAliasIds(userId: string): Promise<{ userObjectId: Types.ObjectId; donorObjectId?: Types.ObjectId }> {
+  private async getUserAliasIds(
+    userId: string,
+  ): Promise<{ userObjectId: Types.ObjectId; donorObjectId?: Types.ObjectId }> {
     const userObjectId = this.toObjectId(userId);
     const donor = await this.donorModel
       .findOne({ userId: userObjectId })
@@ -47,7 +53,9 @@ export class ChatService {
     };
   }
 
-  private async resolveToUserId(possibleUserOrDonorId: Types.ObjectId): Promise<Types.ObjectId> {
+  private async resolveToUserId(
+    possibleUserOrDonorId: Types.ObjectId,
+  ): Promise<Types.ObjectId> {
     const userExists = await this.userModel
       .exists({ _id: possibleUserOrDonorId })
       .exec();
@@ -68,7 +76,10 @@ export class ChatService {
     return possibleUserOrDonorId;
   }
 
-  private async normalizeConversationParticipants(conversationId: Types.ObjectId, participants: Types.ObjectId[]) {
+  private async normalizeConversationParticipants(
+    conversationId: Types.ObjectId,
+    participants: Types.ObjectId[],
+  ) {
     const normalized = await Promise.all(
       participants.map((id) => this.resolveToUserId(new Types.ObjectId(id))),
     );
@@ -93,7 +104,10 @@ export class ChatService {
       .exec();
   }
 
-  private participantMatchesAnyId(participant: any, allowedIds: Types.ObjectId[]) {
+  private participantMatchesAnyId(
+    participant: any,
+    allowedIds: Types.ObjectId[],
+  ) {
     const candidate = participant?._id ?? participant;
     if (candidate && typeof candidate.equals === 'function') {
       return allowedIds.some((id) => candidate.equals(id));
@@ -119,7 +133,9 @@ export class ChatService {
       );
 
       const participantObjectIds = Array.from(
-        new Map(resolvedParticipantIds.map((id) => [id.toString(), id])).values(),
+        new Map(
+          resolvedParticipantIds.map((id) => [id.toString(), id]),
+        ).values(),
       );
 
       // Ensure the creator is included in participants
@@ -128,7 +144,10 @@ export class ChatService {
       }
 
       // Check if private conversation already exists
-      if (createConversationDto.type === 'private' && participantObjectIds.length === 2) {
+      if (
+        createConversationDto.type === 'private' &&
+        participantObjectIds.length === 2
+      ) {
         const existingConversation = await this.conversationModel.findOne({
           type: 'private',
           participants: {
@@ -162,8 +181,11 @@ export class ChatService {
    */
   async getUserConversations(userId: string) {
     try {
-      const { userObjectId, donorObjectId } = await this.getUserAliasIds(userId);
-      const participantMatchIds = donorObjectId ? [userObjectId, donorObjectId] : [userObjectId];
+      const { userObjectId, donorObjectId } =
+        await this.getUserAliasIds(userId);
+      const participantMatchIds = donorObjectId
+        ? [userObjectId, donorObjectId]
+        : [userObjectId];
 
       // Step 1: find by either User._id or Donor._id (legacy conversations)
       const candidateConversations = await this.conversationModel
@@ -229,14 +251,18 @@ export class ChatService {
 
         for (const row of unreadAgg) {
           if (row?._id) {
-            unreadCountsByConversationId.set(String(row._id), Number(row.unreadCount) || 0);
+            unreadCountsByConversationId.set(
+              String(row._id),
+              Number(row.unreadCount) || 0,
+            );
           }
         }
       }
 
       return conversations.map((c) => {
         const obj = c.toObject({ virtuals: true });
-        const unreadCount = unreadCountsByConversationId.get(String(c._id)) ?? 0;
+        const unreadCount =
+          unreadCountsByConversationId.get(String(c._id)) ?? 0;
         return { ...obj, unreadCount };
       });
     } catch (error) {
@@ -249,13 +275,23 @@ export class ChatService {
   /**
    * Get a single conversation with messages
    */
-  async getConversation(conversationId: string, userId: string, limit = 50, skip = 0) {
+  async getConversation(
+    conversationId: string,
+    userId: string,
+    limit = 50,
+    skip = 0,
+  ) {
     try {
       const conversationObjectId = this.toObjectId(conversationId);
-      const { userObjectId, donorObjectId } = await this.getUserAliasIds(userId);
-      const allowedIds = donorObjectId ? [userObjectId, donorObjectId] : [userObjectId];
+      const { userObjectId, donorObjectId } =
+        await this.getUserAliasIds(userId);
+      const allowedIds = donorObjectId
+        ? [userObjectId, donorObjectId]
+        : [userObjectId];
 
-      const rawConversation = await this.conversationModel.findById(conversationObjectId).exec();
+      const rawConversation = await this.conversationModel
+        .findById(conversationObjectId)
+        .exec();
       if (!rawConversation) {
         throw new NotFoundException('Conversation not found');
       }
@@ -272,7 +308,9 @@ export class ChatService {
         .exec();
 
       const normalizedParticipants: Types.ObjectId[] =
-        (normalizedConversationRaw?.participants as any[])?.map((p) => new Types.ObjectId(p)) ?? [];
+        (normalizedConversationRaw?.participants as any[])?.map(
+          (p) => new Types.ObjectId(p),
+        ) ?? [];
 
       // Now populate (participants are normalized to User ids when possible)
       const conversation = await this.conversationModel
@@ -290,7 +328,9 @@ export class ChatService {
       );
 
       if (!isParticipant) {
-        throw new ForbiddenException('You do not have access to this conversation');
+        throw new ForbiddenException(
+          'You do not have access to this conversation',
+        );
       }
 
       // Get messages
@@ -316,7 +356,10 @@ export class ChatService {
         total: totalMessages,
       };
     } catch (error) {
-      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
       throw new BadRequestException(
@@ -328,17 +371,20 @@ export class ChatService {
   /**
    * Send a message in a conversation
    */
-  async sendMessage(
-    sendMessageDto: SendMessageDto,
-    userId: string,
-  ) {
+  async sendMessage(sendMessageDto: SendMessageDto, userId: string) {
     try {
-      const conversationObjectId = this.toObjectId(sendMessageDto.conversationId);
-      const { userObjectId, donorObjectId } = await this.getUserAliasIds(userId);
-      const allowedIds = donorObjectId ? [userObjectId, donorObjectId] : [userObjectId];
+      const conversationObjectId = this.toObjectId(
+        sendMessageDto.conversationId,
+      );
+      const { userObjectId, donorObjectId } =
+        await this.getUserAliasIds(userId);
+      const allowedIds = donorObjectId
+        ? [userObjectId, donorObjectId]
+        : [userObjectId];
 
       // Verify conversation exists and user is a participant
-      const conversation = await this.conversationModel.findById(conversationObjectId);
+      const conversation =
+        await this.conversationModel.findById(conversationObjectId);
 
       if (!conversation) {
         throw new NotFoundException('Conversation not found');
@@ -349,8 +395,14 @@ export class ChatService {
         conversation.participants as unknown as Types.ObjectId[],
       );
 
-      if (!conversation.participants.some((p: any) => this.participantMatchesAnyId(p, allowedIds))) {
-        throw new ForbiddenException('You do not have access to this conversation');
+      if (
+        !conversation.participants.some((p: any) =>
+          this.participantMatchesAnyId(p, allowedIds),
+        )
+      ) {
+        throw new ForbiddenException(
+          'You do not have access to this conversation',
+        );
       }
 
       // Create message
@@ -379,7 +431,10 @@ export class ChatService {
 
       return message;
     } catch (error) {
-      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
       throw new BadRequestException(
@@ -391,17 +446,20 @@ export class ChatService {
   /**
    * Mark message as read
    */
-  async markMessagesAsRead(
-    markAsReadDto: MarkAsReadDto,
-    userId: string,
-  ) {
+  async markMessagesAsRead(markAsReadDto: MarkAsReadDto, userId: string) {
     try {
-      const conversationObjectId = this.toObjectId(markAsReadDto.conversationId);
-      const { userObjectId, donorObjectId } = await this.getUserAliasIds(userId);
-      const allowedIds = donorObjectId ? [userObjectId, donorObjectId] : [userObjectId];
+      const conversationObjectId = this.toObjectId(
+        markAsReadDto.conversationId,
+      );
+      const { userObjectId, donorObjectId } =
+        await this.getUserAliasIds(userId);
+      const allowedIds = donorObjectId
+        ? [userObjectId, donorObjectId]
+        : [userObjectId];
 
       // Verify user is a participant
-      const conversation = await this.conversationModel.findById(conversationObjectId);
+      const conversation =
+        await this.conversationModel.findById(conversationObjectId);
 
       if (!conversation) {
         throw new NotFoundException('Conversation not found');
@@ -412,8 +470,14 @@ export class ChatService {
         conversation.participants as unknown as Types.ObjectId[],
       );
 
-      if (!conversation.participants.some((p: any) => this.participantMatchesAnyId(p, allowedIds))) {
-        throw new ForbiddenException('You do not have access to this conversation');
+      if (
+        !conversation.participants.some((p: any) =>
+          this.participantMatchesAnyId(p, allowedIds),
+        )
+      ) {
+        throw new ForbiddenException(
+          'You do not have access to this conversation',
+        );
       }
 
       // If specific message IDs provided, mark those as read
@@ -442,14 +506,16 @@ export class ChatService {
       const readAtMap = conversation.readAt || new Map();
       readAtMap.set(userId, new Date());
 
-      await this.conversationModel.findByIdAndUpdate(
-        conversationObjectId,
-        { readAt: readAtMap },
-      );
+      await this.conversationModel.findByIdAndUpdate(conversationObjectId, {
+        readAt: readAtMap,
+      });
 
       return { success: true };
     } catch (error) {
-      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
       throw new BadRequestException(
@@ -463,8 +529,11 @@ export class ChatService {
    */
   async getUnreadCount(userId: string) {
     try {
-      const { userObjectId, donorObjectId } = await this.getUserAliasIds(userId);
-      const participantMatchIds = donorObjectId ? [userObjectId, donorObjectId] : [userObjectId];
+      const { userObjectId, donorObjectId } =
+        await this.getUserAliasIds(userId);
+      const participantMatchIds = donorObjectId
+        ? [userObjectId, donorObjectId]
+        : [userObjectId];
 
       const unreadConversations = await this.conversationModel.aggregate([
         {
@@ -539,7 +608,10 @@ export class ChatService {
 
       return { success: true };
     } catch (error) {
-      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
       throw new BadRequestException(
@@ -556,14 +628,17 @@ export class ChatService {
       const conversationObjectId = new Types.ObjectId(conversationId);
       const userObjectId = new Types.ObjectId(userId);
 
-      const conversation = await this.conversationModel.findById(conversationObjectId);
+      const conversation =
+        await this.conversationModel.findById(conversationObjectId);
 
       if (!conversation) {
         throw new NotFoundException('Conversation not found');
       }
 
       if (!conversation.participants.some((p) => p.equals(userObjectId))) {
-        throw new ForbiddenException('You do not have access to this conversation');
+        throw new ForbiddenException(
+          'You do not have access to this conversation',
+        );
       }
 
       await this.conversationModel.findByIdAndUpdate(
@@ -577,7 +652,10 @@ export class ChatService {
 
       return { success: true };
     } catch (error) {
-      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
       throw new BadRequestException(
@@ -589,24 +667,34 @@ export class ChatService {
   /**
    * Add participant to conversation
    */
-  async addParticipant(conversationId: string, participantId: string, userId: string) {
+  async addParticipant(
+    conversationId: string,
+    participantId: string,
+    userId: string,
+  ) {
     try {
       const conversationObjectId = new Types.ObjectId(conversationId);
       const userObjectId = new Types.ObjectId(userId);
       const participantObjectId = new Types.ObjectId(participantId);
 
-      const conversation = await this.conversationModel.findById(conversationObjectId);
+      const conversation =
+        await this.conversationModel.findById(conversationObjectId);
 
       if (!conversation) {
         throw new NotFoundException('Conversation not found');
       }
 
       // Only group admins or original creator can add participants
-      if (conversation.type === 'group' && !conversation.createdBy?.equals(userObjectId)) {
+      if (
+        conversation.type === 'group' &&
+        !conversation.createdBy?.equals(userObjectId)
+      ) {
         throw new ForbiddenException('Only group creator can add participants');
       }
 
-      if (conversation.participants.some((p) => p.equals(participantObjectId))) {
+      if (
+        conversation.participants.some((p) => p.equals(participantObjectId))
+      ) {
         throw new BadRequestException('Participant already in conversation');
       }
 
@@ -636,13 +724,18 @@ export class ChatService {
   /**
    * Remove participant from conversation
    */
-  async removeParticipant(conversationId: string, participantId: string, userId: string) {
+  async removeParticipant(
+    conversationId: string,
+    participantId: string,
+    userId: string,
+  ) {
     try {
       const conversationObjectId = new Types.ObjectId(conversationId);
       const userObjectId = new Types.ObjectId(userId);
       const participantObjectId = new Types.ObjectId(participantId);
 
-      const conversation = await this.conversationModel.findById(conversationObjectId);
+      const conversation =
+        await this.conversationModel.findById(conversationObjectId);
 
       if (!conversation) {
         throw new NotFoundException('Conversation not found');
@@ -666,7 +759,10 @@ export class ChatService {
 
       return { success: true };
     } catch (error) {
-      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
       throw new BadRequestException(

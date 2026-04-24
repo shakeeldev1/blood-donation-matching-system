@@ -7,7 +7,10 @@ import {
   DonorAppointment,
   DonorAppointmentSchema,
 } from './schemas/donor-appointment.schema';
-import { BloodRequest, BloodRequestSchema } from './schemas/blood-request.schema';
+import {
+  BloodRequest,
+  BloodRequestSchema,
+} from './schemas/blood-request.schema';
 import { MailModuleModule } from '../mail-module/mail-module.module';
 
 @Module({

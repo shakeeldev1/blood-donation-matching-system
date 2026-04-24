@@ -62,7 +62,10 @@ export class DonorService {
   ];
 
   // Helper method to calculate BMI from weight and height
-  private calculateBMI(weight?: string | number, height?: string | number): number | undefined {
+  private calculateBMI(
+    weight?: string | number,
+    height?: string | number,
+  ): number | undefined {
     if (!weight || !height) {
       return undefined;
     }
@@ -241,9 +244,7 @@ export class DonorService {
         {
           label: 'Average Rating',
           value: donor ? donor.rating.toFixed(1) : '-',
-          badge: donor
-            ? { text: donor.status, type: 'success' }
-            : undefined,
+          badge: donor ? { text: donor.status, type: 'success' } : undefined,
           subtext: donor ? 'Community trust' : 'Not available',
         },
         {
@@ -283,11 +284,19 @@ export class DonorService {
     const today = new Date();
     const upcomingAppointments = appointments.filter((appointment) => {
       const appointmentDate = new Date(appointment.date);
-      return appointment.status !== 'Completed' && appointment.status !== 'Cancelled' && appointmentDate >= today;
+      return (
+        appointment.status !== 'Completed' &&
+        appointment.status !== 'Cancelled' &&
+        appointmentDate >= today
+      );
     });
     const pastAppointments = appointments.filter((appointment) => {
       const appointmentDate = new Date(appointment.date);
-      return appointment.status === 'Completed' || appointment.status === 'Cancelled' || appointmentDate < today;
+      return (
+        appointment.status === 'Completed' ||
+        appointment.status === 'Cancelled' ||
+        appointmentDate < today
+      );
     });
 
     return {
@@ -300,7 +309,10 @@ export class DonorService {
         },
         {
           title: 'Completed',
-          value: String(pastAppointments.filter((item) => item.status === 'Completed').length),
+          value: String(
+            pastAppointments.filter((item) => item.status === 'Completed')
+              .length,
+          ),
           label: 'Lifetime visits',
           color: 'green',
         },
@@ -319,7 +331,15 @@ export class DonorService {
         "St. Mary's Medical Center",
         'Downtown Blood Bank',
       ],
-      times: ['09:00 AM', '10:00 AM', '11:00 AM', '01:00 PM', '02:00 PM', '03:00 PM', '04:00 PM'],
+      times: [
+        '09:00 AM',
+        '10:00 AM',
+        '11:00 AM',
+        '01:00 PM',
+        '02:00 PM',
+        '03:00 PM',
+        '04:00 PM',
+      ],
     };
   }
 
@@ -334,7 +354,10 @@ export class DonorService {
   async cancelAppointment(userId: string, appointmentId: string) {
     const appointment = await this.appointmentModel
       .findOneAndUpdate(
-        { _id: new Types.ObjectId(appointmentId), userId: new Types.ObjectId(userId) },
+        {
+          _id: new Types.ObjectId(appointmentId),
+          userId: new Types.ObjectId(userId),
+        },
         { $set: { status: 'Cancelled' } },
         { new: true },
       )
@@ -368,18 +391,33 @@ export class DonorService {
       }),
       location: item.hospital,
       type: item.type,
-      amount: item.type === 'Platelets' ? '250ml' : item.type === 'Plasma' ? '600ml' : '450ml',
+      amount:
+        item.type === 'Platelets'
+          ? '250ml'
+          : item.type === 'Plasma'
+            ? '600ml'
+            : '450ml',
       status: item.status,
       certificateId: `CERT-${new Date(item.date).getFullYear()}-${String(index + 1).padStart(3, '0')}`,
     }));
 
     const totalUnits = completedAppointments.reduce((sum, item) => {
-      return sum + (item.type === 'Platelets' ? 250 : item.type === 'Plasma' ? 600 : 450);
+      return (
+        sum +
+        (item.type === 'Platelets' ? 250 : item.type === 'Plasma' ? 600 : 450)
+      );
     }, 0);
 
-    const lastDonation = donor?.lastDonation ? new Date(donor.lastDonation) : null;
+    const lastDonation = donor?.lastDonation
+      ? new Date(donor.lastDonation)
+      : null;
     const daysSinceLastDonation = lastDonation
-      ? Math.max(0, Math.ceil((Date.now() - lastDonation.getTime()) / (1000 * 60 * 60 * 24)))
+      ? Math.max(
+          0,
+          Math.ceil(
+            (Date.now() - lastDonation.getTime()) / (1000 * 60 * 60 * 24),
+          ),
+        )
       : null;
 
     return {
@@ -393,10 +431,15 @@ export class DonorService {
         {
           title: 'Last Donation',
           value: lastDonation
-            ? lastDonation.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            ? lastDonation.toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+              })
             : 'N/A',
           label:
-            daysSinceLastDonation === null ? 'No donations recorded' : `${daysSinceLastDonation} days ago`,
+            daysSinceLastDonation === null
+              ? 'No donations recorded'
+              : `${daysSinceLastDonation} days ago`,
           color: 'blue',
         },
         {
@@ -426,9 +469,21 @@ export class DonorService {
     if (!donor) {
       return {
         stats: [
-          { label: 'Critical Needs', value: 0, badge: { text: 'Urgent', type: 'error' } },
-          { label: 'Nearby Requests', value: 0, subtext: 'Complete profile first' },
-          { label: 'My Requests', value: myRequests.length, subtext: 'Requests posted by you' },
+          {
+            label: 'Critical Needs',
+            value: 0,
+            badge: { text: 'Urgent', type: 'error' },
+          },
+          {
+            label: 'Nearby Requests',
+            value: 0,
+            subtext: 'Complete profile first',
+          },
+          {
+            label: 'My Requests',
+            value: myRequests.length,
+            subtext: 'Requests posted by you',
+          },
         ],
         requests: [],
         myRequests: myRequests.map((request, index) => ({
@@ -456,7 +511,9 @@ export class DonorService {
       stats: [
         {
           label: 'Critical Needs',
-          value: matchedRequests.filter((request) => request.urgency === 'Critical').length,
+          value: matchedRequests.filter(
+            (request) => request.urgency === 'Critical',
+          ).length,
           badge: { text: 'Urgent', type: 'error' },
         },
         {
@@ -541,7 +598,9 @@ export class DonorService {
         contact: created.contact,
         requestId: String((created as unknown as { _id: Types.ObjectId })._id),
       })
-      .catch(() => { /* non-blocking */ });
+      .catch(() => {
+        /* non-blocking */
+      });
 
     return created;
   }
@@ -551,7 +610,10 @@ export class DonorService {
     requestId: string,
     status: 'Pending' | 'Accepted' | 'Fulfilled' | 'Closed',
   ) {
-    const request = await this.bloodRequestModel.findById(requestId).lean().exec();
+    const request = await this.bloodRequestModel
+      .findById(requestId)
+      .lean()
+      .exec();
 
     if (!request) {
       throw new NotFoundException('Request not found');
@@ -564,7 +626,9 @@ export class DonorService {
         .exists({ userId: new Types.ObjectId(user.sub) })
         .exec();
       if (!donor) {
-        throw new ForbiddenException('Only donors can accept or fulfill requests');
+        throw new ForbiddenException(
+          'Only donors can accept or fulfill requests',
+        );
       }
     };
 
@@ -629,7 +693,9 @@ export class DonorService {
         return this.buildRequestStatusResultAndNotify(updated, user);
       }
 
-      throw new BadRequestException('Owners can set Pending, Fulfilled, or Closed');
+      throw new BadRequestException(
+        'Owners can set Pending, Fulfilled, or Closed',
+      );
     }
 
     // Responder (non-owner) actions
@@ -655,7 +721,10 @@ export class DonorService {
 
       if (!updated) {
         // Re-check current status for a better message
-        const latest = await this.bloodRequestModel.findById(requestId).lean().exec();
+        const latest = await this.bloodRequestModel
+          .findById(requestId)
+          .lean()
+          .exec();
         if (!latest) throw new NotFoundException('Request not found');
         if (latest.status !== 'Pending') {
           throw new ConflictException('This request is no longer pending');
@@ -685,12 +754,19 @@ export class DonorService {
         .exec();
 
       if (!updated) {
-        const latest = await this.bloodRequestModel.findById(requestId).lean().exec();
+        const latest = await this.bloodRequestModel
+          .findById(requestId)
+          .lean()
+          .exec();
         if (!latest) throw new NotFoundException('Request not found');
         if (latest.status !== 'Accepted') {
-          throw new ConflictException('Only accepted requests can be fulfilled');
+          throw new ConflictException(
+            'Only accepted requests can be fulfilled',
+          );
         }
-        throw new ForbiddenException('Only the accepting donor can fulfill this request');
+        throw new ForbiddenException(
+          'Only the accepting donor can fulfill this request',
+        );
       }
 
       return this.buildRequestStatusResultAndNotify(updated, user);
@@ -729,7 +805,11 @@ export class DonorService {
     return result;
   }
 
-  async getSettings(user: { sub: string; name: string; email: string }): Promise<DonorSettingsResponse> {
+  async getSettings(user: {
+    sub: string;
+    name: string;
+    email: string;
+  }): Promise<DonorSettingsResponse> {
     const donor = await this.donorModel
       .findOne({ userId: new Types.ObjectId(user.sub) })
       .lean()
@@ -753,7 +833,14 @@ export class DonorService {
     const donor = await this.donorModel
       .findOneAndUpdate(
         { userId: new Types.ObjectId(userId) },
-        { $set: Object.fromEntries(Object.entries(dto).map(([key, value]) => [`notificationSettings.${key}`, value])) },
+        {
+          $set: Object.fromEntries(
+            Object.entries(dto).map(([key, value]) => [
+              `notificationSettings.${key}`,
+              value,
+            ]),
+          ),
+        },
         { new: true, upsert: false },
       )
       .lean()
@@ -773,7 +860,9 @@ export class DonorService {
   }
 
   async deleteByUserId(userId: string) {
-    await this.appointmentModel.deleteMany({ userId: new Types.ObjectId(userId) });
+    await this.appointmentModel.deleteMany({
+      userId: new Types.ObjectId(userId),
+    });
     await this.donorModel.deleteOne({ userId: new Types.ObjectId(userId) });
   }
 
@@ -862,7 +951,9 @@ export class DonorService {
         : await this.bloodRequestModel
             .find({
               bloodGroup: { $in: compatibleGroups },
-              ...(viewerUserId ? { requesterUserId: { $ne: viewerUserId } } : {}),
+              ...(viewerUserId
+                ? { requesterUserId: { $ne: viewerUserId } }
+                : {}),
               $or: [
                 { status: 'Pending' },
                 ...(viewerUserId
@@ -967,12 +1058,17 @@ export class DonorService {
       checkpointDate.setDate(checkpointDate.getDate() + day);
       const elapsedDays = Math.max(
         0,
-        Math.ceil((today.getTime() - donatedOn.getTime()) / (1000 * 60 * 60 * 24)),
+        Math.ceil(
+          (today.getTime() - donatedOn.getTime()) / (1000 * 60 * 60 * 24),
+        ),
       );
 
       return {
         label,
-        readiness: Math.min(100, Math.round((Math.min(elapsedDays, day) / 56) * 100)),
+        readiness: Math.min(
+          100,
+          Math.round((Math.min(elapsedDays, day) / 56) * 100),
+        ),
         target: Math.round((day / 56) * 100),
         checkpointDate: checkpointDate.toLocaleDateString('en-US', {
           month: 'short',

@@ -1,4 +1,466 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { AskChatbotDto } from './dto/ask-chatbot.dto';
+import { Donor } from '../donor/schemas/donor.schema';
+import { BloodRequest } from '../donor/schemas/blood-request.schema';
+
+type MlServiceChatResponse = {
+  intent?: string | null;
+  reply?: string;
+  source?: string;
+  confidence?: number;
+};
+
+type ChatbotReply = {
+  reply: string;
+  intent: string | null;
+  source:
+    | 'ml-service'
+    | 'fallback'
+    | 'server-rules'
+    | 'database-tools'
+    | 'openai';
+  confidence: number;
+};
+
+type ChatbotRequester = {
+  sub: string;
+  email: string;
+  name: string;
+  role: string;
+} | null;
 
 @Injectable()
-export class ChatbotService {}
+export class ChatbotService {
+  private readonly logger = new Logger(ChatbotService.name);
+  private openAiDisabledUntil = 0;
+
+  constructor(
+    private readonly configService: ConfigService,
+    @InjectModel(Donor.name) private readonly donorModel: Model<Donor>,
+    @InjectModel(BloodRequest.name)
+    private readonly bloodRequestModel: Model<BloodRequest>,
+  ) {}
+
+  private getMlServiceUrl() {
+    return (
+      this.configService.get<string>('ML_SERVICE_URL') ??
+      'http://127.0.0.1:5001'
+    );
+  }
+
+  private getOpenAiApiKey() {
+    return this.configService.get<string>('OPENAI_API_KEY') ?? '';
+  }
+
+  private getOpenAiModel() {
+    return this.configService.get<string>('OPENAI_MODEL') ?? 'gpt-4.1-mini';
+  }
+
+  private getOpenAiRateLimitCooldownMs() {
+    const configuredValue = Number(
+      this.configService.get<string>('OPENAI_RATE_LIMIT_COOLDOWN_MS'),
+    );
+
+    return Number.isFinite(configuredValue) && configuredValue > 0
+      ? configuredValue
+      : 60_000;
+  }
+
+  private isOpenAiConfigured() {
+    return Boolean(this.getOpenAiApiKey().trim());
+  }
+
+  private extractBloodGroup(text: string): string | null {
+    const match = text.match(/\b(a\+|a-|b\+|b-|ab\+|ab-|o\+|o-)\b/i);
+    return match ? match[1].toUpperCase() : null;
+  }
+
+  private isBloodGroupUserQuery(text: string): boolean {
+    return /\b(a\+|a-|b\+|b-|ab\+|ab-|o\+|o-)\b\s*(group)?\s*(user|users|donor|donors)\b/i.test(
+      text,
+    );
+  }
+
+  private isSensitiveDatabaseQuestion(text: string): boolean {
+    return (
+      /\b(how many|total|number of)\b.*\b(donor|donors)\b/.test(text) ||
+      /\b(available|availability)\b.*\b(donor|donors)\b/.test(text) ||
+      /\b(urgent|critical|high)\b.*\b(request|requests)\b/.test(text) ||
+      this.isBloodGroupUserQuery(text)
+    );
+  }
+
+  private canAccessSensitiveMetrics(requester: ChatbotRequester): boolean {
+    if (!requester?.role) {
+      return false;
+    }
+
+    return requester.role.toLowerCase() === 'admin';
+  }
+
+  private async buildDatabaseReply(
+    message: string,
+    requester: ChatbotRequester,
+  ): Promise<ChatbotReply | null> {
+    const text = message.toLowerCase();
+
+    if (
+      this.isSensitiveDatabaseQuestion(text) &&
+      !this.canAccessSensitiveMetrics(requester)
+    ) {
+      return {
+        reply:
+          'Live operational metrics are restricted. Please sign in with an admin account to access donor and urgent request statistics.',
+        intent: 'restricted_metrics_access',
+        source: 'server-rules',
+        confidence: 1,
+      };
+    }
+
+    if (/\b(how many|total|number of)\b.*\b(donor|donors)\b/.test(text)) {
+      const totalDonors = await this.donorModel.countDocuments({}).exec();
+      const availableDonors = await this.donorModel
+        .countDocuments({ availability: true })
+        .exec();
+
+      return {
+        reply: `Currently, there are ${totalDonors} registered donors, and ${availableDonors} are marked as available.`,
+        intent: 'donor_count',
+        source: 'database-tools',
+        confidence: 0.99,
+      };
+    }
+
+    if (/\b(available|availability)\b.*\b(donor|donors)\b/.test(text)) {
+      const bloodGroup = this.extractBloodGroup(text);
+
+      if (bloodGroup) {
+        const availableByGroup = await this.donorModel
+          .countDocuments({ availability: true, bloodGroup })
+          .exec();
+
+        return {
+          reply: `There are currently ${availableByGroup} available donors with blood group ${bloodGroup}.`,
+          intent: 'available_donors_by_blood_group',
+          source: 'database-tools',
+          confidence: 0.99,
+        };
+      }
+
+      const availableDonors = await this.donorModel
+        .countDocuments({ availability: true })
+        .exec();
+
+      return {
+        reply: `There are currently ${availableDonors} available donors in total. Include a blood group like O- or A+ to get a filtered count.`,
+        intent: 'available_donors',
+        source: 'database-tools',
+        confidence: 0.98,
+      };
+    }
+
+    if (this.isBloodGroupUserQuery(text)) {
+      const bloodGroup = this.extractBloodGroup(text);
+
+      if (!bloodGroup) {
+        return null;
+      }
+
+      const totalByGroup = await this.donorModel
+        .countDocuments({ bloodGroup })
+        .exec();
+      const availableByGroup = await this.donorModel
+        .countDocuments({ bloodGroup, availability: true })
+        .exec();
+
+      return {
+        reply: `For blood group ${bloodGroup}, there are ${totalByGroup} registered donors and ${availableByGroup} currently available donors.`,
+        intent: 'blood_group_user_count',
+        source: 'database-tools',
+        confidence: 0.99,
+      };
+    }
+
+    if (/\b(urgent|critical|high)\b.*\b(request|requests)\b/.test(text)) {
+      const activeUrgentRequests = await this.bloodRequestModel
+        .countDocuments({
+          status: { $in: ['Pending', 'Accepted'] },
+          urgency: { $in: ['Critical', 'High'] },
+        })
+        .exec();
+
+      return {
+        reply: `There are currently ${activeUrgentRequests} active urgent blood requests (Critical or High urgency in Pending/Accepted state).`,
+        intent: 'urgent_requests_count',
+        source: 'database-tools',
+        confidence: 0.99,
+      };
+    }
+
+    return null;
+  }
+
+  private extractOpenAiText(payload: unknown): string {
+    if (!payload || typeof payload !== 'object') {
+      return '';
+    }
+
+    const maybePayload = payload as {
+      output_text?: unknown;
+      output?: Array<{
+        content?: Array<{ type?: string; text?: string }>;
+      }>;
+    };
+
+    if (typeof maybePayload.output_text === 'string') {
+      return maybePayload.output_text.trim();
+    }
+
+    if (Array.isArray(maybePayload.output)) {
+      for (const item of maybePayload.output) {
+        if (!item || !Array.isArray(item.content)) {
+          continue;
+        }
+
+        for (const content of item.content) {
+          if (
+            content?.type === 'output_text' &&
+            typeof content.text === 'string'
+          ) {
+            const text = content.text.trim();
+            if (text) {
+              return text;
+            }
+          }
+        }
+      }
+    }
+
+    return '';
+  }
+
+  private async askOpenAi(message: string): Promise<ChatbotReply | null> {
+    if (!this.isOpenAiConfigured()) {
+      return null;
+    }
+
+    if (Date.now() < this.openAiDisabledUntil) {
+      return null;
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+
+    try {
+      const response = await fetch('https://api.openai.com/v1/responses', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.getOpenAiApiKey()}`,
+        },
+        body: JSON.stringify({
+          model: this.getOpenAiModel(),
+          temperature: 0.2,
+          max_output_tokens: 500,
+          input: [
+            {
+              role: 'system',
+              content: [
+                {
+                  type: 'input_text',
+                  text: 'You are the Blood Donation System assistant. Answer general questions clearly and professionally. Do not invent live database numbers. If a user asks for live counts or operational metrics, state that live data is handled by system database tools.',
+                },
+              ],
+            },
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'input_text',
+                  text: message,
+                },
+              ],
+            },
+          ],
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        if (response.status === 429) {
+          this.openAiDisabledUntil = Date.now() + this.getOpenAiRateLimitCooldownMs();
+          this.logger.log(
+            `OpenAI rate limited (429). Falling back for ${this.getOpenAiRateLimitCooldownMs()}ms.`,
+          );
+          return null;
+        }
+
+        this.logger.warn(`OpenAI service returned ${response.status}`);
+        return null;
+      }
+
+      const payload = (await response.json()) as unknown;
+      const reply = this.extractOpenAiText(payload);
+
+      if (!reply) {
+        return null;
+      }
+
+      return {
+        reply,
+        intent: null,
+        source: 'openai',
+        confidence: 0.9,
+      };
+    } catch (error) {
+      this.openAiDisabledUntil = Date.now() + 30_000;
+      this.logger.warn(
+        `OpenAI unavailable, cooling down for 30000ms and continuing with fallback chain: ${
+          error instanceof Error ? error.message : 'unknown error'
+        }`,
+      );
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private buildFallback(message: string): ChatbotReply {
+    if (!message?.trim()) {
+      return {
+        reply: 'Please type your question so I can help.',
+        intent: null,
+        source: 'fallback',
+        confidence: 0.0,
+      };
+    }
+
+    return {
+      reply:
+        'I can help with blood donation guidance, donor eligibility, blood requests, recipient flow, campaigns, and platform usage. Please share a specific question.',
+      intent: null,
+      source: 'fallback',
+      confidence: 0.2,
+    };
+  }
+
+  private buildRuleBasedReply(message: string): ChatbotReply | null {
+    const text = message.toLowerCase();
+
+    if (
+      /\b(expensive|costly|price|cost)\b.*\b(blood|group|type)\b|\bwhich blood group is expensive\b/.test(
+        text,
+      )
+    ) {
+      return {
+        reply:
+          'Blood should not be sold commercially. In legitimate blood bank workflows, charges are generally for processing, testing, storage, and logistics, not for the blood group itself. Availability can vary by group (for example O- is often more constrained), but pricing policy depends on regulated medical providers.',
+        intent: 'blood_pricing_policy',
+        source: 'server-rules',
+        confidence: 0.96,
+      };
+    }
+
+    if (/\bwho can donate\b|\beligible\b.*\bdonate\b/.test(text)) {
+      return {
+        reply:
+          'General eligibility includes age 18-65, healthy condition, safe hemoglobin range, and a proper interval since last donation. Final eligibility is confirmed by medical screening.',
+        intent: 'donation_eligibility',
+        source: 'server-rules',
+        confidence: 0.95,
+      };
+    }
+
+    if (/\bhow\b.*\brequest\b.*\bblood\b|\brequest blood\b/.test(text)) {
+      return {
+        reply:
+          'To request blood, submit patient details, hospital, blood type, required units, urgency, and contact number in the request form. The system then routes and tracks the request status.',
+        intent: 'request_blood',
+        source: 'server-rules',
+        confidence: 0.95,
+      };
+    }
+
+    if (/\bhow often\b.*\bdonate\b|\binterval\b.*\bdonation\b/.test(text)) {
+      return {
+        reply:
+          'For many donors, whole blood donation is allowed around every 3 months, but exact rules can vary by policy and medical advice.',
+        intent: 'donation_frequency',
+        source: 'server-rules',
+        confidence: 0.95,
+      };
+    }
+
+    return null;
+  }
+
+  async ask(
+    dto: AskChatbotDto,
+    requester: ChatbotRequester = null,
+  ): Promise<ChatbotReply> {
+    const message = dto.message?.trim();
+    if (!message) {
+      return this.buildFallback('');
+    }
+
+    const databaseReply = await this.buildDatabaseReply(message, requester);
+    if (databaseReply) {
+      return databaseReply;
+    }
+
+    const openAiReply = await this.askOpenAi(message);
+    if (openAiReply) {
+      return openAiReply;
+    }
+
+    const serverRuleReply = this.buildRuleBasedReply(message);
+    if (serverRuleReply) {
+      return serverRuleReply;
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    try {
+      const response = await fetch(`${this.getMlServiceUrl()}/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message, sessionId: dto.sessionId }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        this.logger.warn(`ML service returned ${response.status}`);
+        return this.buildFallback(message);
+      }
+
+      const payload = (await response.json()) as MlServiceChatResponse;
+      const reply = payload.reply?.trim();
+
+      if (!reply) {
+        return this.buildFallback(message);
+      }
+
+      return {
+        reply,
+        intent: payload.intent ?? null,
+        source: 'ml-service',
+        confidence: payload.confidence ?? 0.5,
+      };
+    } catch (error) {
+      this.logger.warn(
+        `ML service unavailable, using fallback: ${
+          error instanceof Error ? error.message : 'unknown error'
+        }`,
+      );
+      return this.buildFallback(message);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}

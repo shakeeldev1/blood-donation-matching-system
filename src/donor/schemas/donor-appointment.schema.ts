@@ -18,11 +18,20 @@ export class DonorAppointment extends Document {
   @Prop({ required: true })
   location!: string;
 
-  @Prop({ required: true, enum: ['Pending', 'Confirmed', 'Completed', 'Cancelled'], default: 'Pending' })
+  @Prop({
+    required: true,
+    enum: ['Pending', 'Confirmed', 'Completed', 'Cancelled'],
+    default: 'Pending',
+  })
   status!: string;
 
-  @Prop({ required: true, enum: ['Whole Blood', 'Platelets', 'Plasma', 'Organ'], default: 'Whole Blood' })
+  @Prop({
+    required: true,
+    enum: ['Whole Blood', 'Platelets', 'Plasma', 'Organ'],
+    default: 'Whole Blood',
+  })
   type!: string;
 }
 
-export const DonorAppointmentSchema = SchemaFactory.createForClass(DonorAppointment);
+export const DonorAppointmentSchema =
+  SchemaFactory.createForClass(DonorAppointment);

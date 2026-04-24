@@ -15,7 +15,11 @@ export class AdminComplaint extends Document {
   @Prop({ required: true, enum: ['High', 'Medium', 'Low'], default: 'Low' })
   priority!: string;
 
-  @Prop({ required: true, enum: ['Pending', 'Resolved', 'Rejected'], default: 'Pending' })
+  @Prop({
+    required: true,
+    enum: ['Pending', 'Resolved', 'Rejected'],
+    default: 'Pending',
+  })
   status!: string;
 
   @Prop({ default: '' })
@@ -31,4 +35,5 @@ export class AdminComplaint extends Document {
   phone?: string;
 }
 
-export const AdminComplaintSchema = SchemaFactory.createForClass(AdminComplaint);
+export const AdminComplaintSchema =
+  SchemaFactory.createForClass(AdminComplaint);

@@ -17,7 +17,9 @@ import { ChatbotModule } from './chatbot/chatbot.module';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
-    MongooseModule.forRoot('mongodb://localhost:27017/blood-donation'),
+    MongooseModule.forRoot(
+      process.env.DB_URL ?? 'mongodb://localhost:27017/blood-donation',
+    ),
     UserModule,
     AuthModule,
     MailModuleModule,

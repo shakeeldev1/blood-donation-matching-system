@@ -15,7 +15,11 @@ export class AdminCampaign extends Document {
   @Prop({ default: '' })
   endDate!: string;
 
-  @Prop({ required: true, enum: ['Active', 'Completed', 'Upcoming'], default: 'Upcoming' })
+  @Prop({
+    required: true,
+    enum: ['Active', 'Completed', 'Upcoming'],
+    default: 'Upcoming',
+  })
   status!: string;
 
   @Prop({ default: 0 })

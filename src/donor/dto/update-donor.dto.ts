@@ -72,7 +72,9 @@ export class UpdateDonorDto {
 
   @IsString()
   @IsOptional()
-  @Matches(/^\d{1,3}\/\d{1,3}$/, { message: 'Blood pressure must be in format: 120/80' })
+  @Matches(/^\d{1,3}\/\d{1,3}$/, {
+    message: 'Blood pressure must be in format: 120/80',
+  })
   bloodPressure?: string; // Format: 120/80
 
   @IsNumber()
@@ -84,7 +86,9 @@ export class UpdateDonorDto {
 
   @IsString()
   @IsOptional()
-  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Date must be in format: YYYY-MM-DD' })
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: 'Date must be in format: YYYY-MM-DD',
+  })
   lastHealthCheckup?: string;
 
   @IsBoolean()

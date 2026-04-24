@@ -12,9 +12,12 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { AdminService } from './admin.service';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
 
 @Controller('admin')
-@UseGuards(AuthGuard('jwt'))
+@UseGuards(AuthGuard('jwt'), RolesGuard)
+@Roles('admin')
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 
@@ -29,12 +32,18 @@ export class AdminController {
   }
 
   @Get('complaints')
-  async getComplaints(@Query('page') page: string = '1', @Query('limit') limit: string = '10') {
+  async getComplaints(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+  ) {
     return this.adminService.getComplaints(parseInt(page), parseInt(limit));
   }
 
   @Get('reports')
-  async getReports(@Query('page') page: string = '1', @Query('limit') limit: string = '10') {
+  async getReports(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+  ) {
     return this.adminService.getReports(parseInt(page), parseInt(limit));
   }
 
@@ -44,7 +53,10 @@ export class AdminController {
   }
 
   @Get('donors')
-  async getDonors(@Query('page') page: string = '1', @Query('limit') limit: string = '10') {
+  async getDonors(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+  ) {
     return this.adminService.getDonors(parseInt(page), parseInt(limit));
   }
 
@@ -106,7 +118,10 @@ export class AdminController {
   }
 
   @Get('requests')
-  async getRequests(@Query('page') page: string = '1', @Query('limit') limit: string = '10') {
+  async getRequests(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+  ) {
     return this.adminService.getRequests(parseInt(page), parseInt(limit));
   }
 
@@ -153,7 +168,10 @@ export class AdminController {
     @Param('id') id: string,
     @Body() body: { status: 'Pending' | 'Approved' | 'Rejected' },
   ) {
-    const request = await this.adminService.updateRequestStatus(id, body.status);
+    const request = await this.adminService.updateRequestStatus(
+      id,
+      body.status,
+    );
     if (!request) {
       throw new NotFoundException('Request not found');
     }
@@ -172,7 +190,10 @@ export class AdminController {
   }
 
   @Get('recipients')
-  async getRecipients(@Query('page') page: string = '1', @Query('limit') limit: string = '10') {
+  async getRecipients(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+  ) {
     return this.adminService.getRecipients(parseInt(page), parseInt(limit));
   }
 
@@ -237,7 +258,10 @@ export class AdminController {
   }
 
   @Get('campaigns')
-  async getCampaigns(@Query('page') page: string = '1', @Query('limit') limit: string = '10') {
+  async getCampaigns(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+  ) {
     return this.adminService.getCampaigns(parseInt(page), parseInt(limit));
   }
 
@@ -251,7 +275,10 @@ export class AdminController {
     @Param('bloodType') bloodType: string,
     @Body() body: { delta: number },
   ) {
-    const inventory = await this.adminService.adjustInventoryUnits(bloodType, body.delta);
+    const inventory = await this.adminService.adjustInventoryUnits(
+      bloodType,
+      body.delta,
+    );
     if (!inventory) {
       throw new NotFoundException('Blood type not found in inventory');
     }
@@ -262,7 +289,8 @@ export class AdminController {
   @Patch('complaints/:id/status')
   async updateComplaintStatus(
     @Param('id') id: string,
-    @Body() body: { status: 'Pending' | 'Resolved' | 'Rejected'; resolution?: string },
+    @Body()
+    body: { status: 'Pending' | 'Resolved' | 'Rejected'; resolution?: string },
   ) {
     const complaint = await this.adminService.updateComplaintStatus(id, body);
     if (!complaint) {

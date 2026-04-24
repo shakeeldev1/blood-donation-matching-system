@@ -31,4 +31,5 @@ export class AdminRecipient extends Document {
   requestDate?: string;
 }
 
-export const AdminRecipientSchema = SchemaFactory.createForClass(AdminRecipient);
+export const AdminRecipientSchema =
+  SchemaFactory.createForClass(AdminRecipient);

@@ -14,13 +14,19 @@ export class Payment {
   @Prop({ required: true })
   stripePaymentIntentId: string;
 
-  @Prop({ required: true, enum: ['pending', 'succeeded', 'failed', 'canceled'] })
+  @Prop({
+    required: true,
+    enum: ['pending', 'succeeded', 'failed', 'canceled'],
+  })
   status: string;
 
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   userId: Types.ObjectId;
 
-  @Prop({ required: true, enum: ['blood_purchase', 'donation_support', 'campaign'] })
+  @Prop({
+    required: true,
+    enum: ['blood_purchase', 'donation_support', 'campaign'],
+  })
   paymentType: string;
 
   @Prop({})

@@ -10,40 +10,40 @@ import { AuthGuard } from '@nestjs/passport';
 
 @Controller('auth')
 export class AuthController {
-	constructor(private readonly authService: AuthService) {}
-	@UseGuards(AuthGuard('jwt'))
-	@Get('me')
-	async getMyProfile(@Req() req) {
-		return req.user;
-	}
+  constructor(private readonly authService: AuthService) {}
+  @UseGuards(AuthGuard('jwt'))
+  @Get('me')
+  async getMyProfile(@Req() req) {
+    return req.user;
+  }
 
-	@Post('send-otp')
-	sendOtp(@Body() dto: SendOtpDto) {
-		return this.authService.sendOtp(dto.email);
-	}
+  @Post('send-otp')
+  sendOtp(@Body() dto: SendOtpDto) {
+    return this.authService.sendOtp(dto.email);
+  }
 
-	@Post('verify-otp')
-	verifyOtp(@Body() dto: VerifyOtpDto) {
-		return this.authService.verifyOtp(dto.email, dto.otp);
-	}
+  @Post('verify-otp')
+  verifyOtp(@Body() dto: VerifyOtpDto) {
+    return this.authService.verifyOtp(dto.email, dto.otp);
+  }
 
-	@Post('signup')
-	signup(@Body() dto: SignupDto) {
-		return this.authService.signup(dto);
-	}
+  @Post('signup')
+  signup(@Body() dto: SignupDto) {
+    return this.authService.signup(dto);
+  }
 
-	@Post('login')
-	login(@Body() dto: LoginDto) {
-		return this.authService.login(dto);
-	}
+  @Post('login')
+  login(@Body() dto: LoginDto) {
+    return this.authService.login(dto);
+  }
 
-	@Post('refresh')
-	refresh(@Body() dto: RefreshTokenDto) {
-		return this.authService.refreshTokens(dto.userId, dto.refreshToken);
-	}
+  @Post('refresh')
+  refresh(@Body() dto: RefreshTokenDto) {
+    return this.authService.refreshTokens(dto.userId, dto.refreshToken);
+  }
 
-	@Post('logout')
-	logout(@Body('userId') userId: string) {
-		return this.authService.logout(userId);
-	}
+  @Post('logout')
+  logout(@Body('userId') userId: string) {
+    return this.authService.logout(userId);
+  }
 }

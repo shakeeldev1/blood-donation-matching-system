@@ -9,7 +9,9 @@ import { CreatePaymentIntentDto, ConfirmPaymentDto } from './dto/payment.dto';
 export class PaymentService {
   private stripe: InstanceType<typeof Stripe>;
 
-  constructor(@InjectModel(Payment.name) private paymentModel: Model<PaymentDocument>) {
+  constructor(
+    @InjectModel(Payment.name) private paymentModel: Model<PaymentDocument>,
+  ) {
     const stripeKey = process.env.STRIPE_SECRET_KEY;
     if (!stripeKey) {
       throw new Error('STRIPE_SECRET_KEY environment variable is not defined');
@@ -45,7 +47,9 @@ export class PaymentService {
         paymentType: dto.paymentType,
         bloodType: dto.bloodType,
         units: dto.units,
-        recipientId: dto.recipientId ? new Types.ObjectId(dto.recipientId) : undefined,
+        recipientId: dto.recipientId
+          ? new Types.ObjectId(dto.recipientId)
+          : undefined,
         metadata: dto.metadata,
       });
 
@@ -88,7 +92,11 @@ export class PaymentService {
       if (paymentIntent.status === 'succeeded' && payment) {
         // Get receipt URL if available
         const expandedIntent = paymentIntent as any;
-        if (expandedIntent.charges && expandedIntent.charges.data && expandedIntent.charges.data.length > 0) {
+        if (
+          expandedIntent.charges &&
+          expandedIntent.charges.data &&
+          expandedIntent.charges.data.length > 0
+        ) {
           const charge = expandedIntent.charges.data[0];
           payment.receiptUrl = charge.receipt_url || null;
           await payment.save();

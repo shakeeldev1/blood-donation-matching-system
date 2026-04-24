@@ -65,7 +65,10 @@ export class DonorController {
 
   @UseGuards(AuthGuard('jwt'))
   @Post('appointments')
-  createAppointment(@Req() req: AuthRequest, @Body() dto: CreateAppointmentDto) {
+  createAppointment(
+    @Req() req: AuthRequest,
+    @Body() dto: CreateAppointmentDto,
+  ) {
     return this.donorService.createAppointment(req.user.sub, dto);
   }
 
@@ -103,7 +106,11 @@ export class DonorController {
     @Param('requestId') requestId: string,
     @Body() dto: UpdateBloodRequestStatusDto,
   ) {
-    return this.donorService.updateRequestStatus(req.user, requestId, dto.status);
+    return this.donorService.updateRequestStatus(
+      req.user,
+      requestId,
+      dto.status,
+    );
   }
 
   @UseGuards(AuthGuard('jwt'))

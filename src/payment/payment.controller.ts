@@ -24,7 +24,10 @@ export class PaymentController {
    */
   @UseGuards(JwtAuthGuard)
   @Post('create-intent')
-  async createPaymentIntent(@Request() req, @Body() dto: CreatePaymentIntentDto) {
+  async createPaymentIntent(
+    @Request() req,
+    @Body() dto: CreatePaymentIntentDto,
+  ) {
     const userId = req.user.id;
     const result = await this.paymentService.createPaymentIntent(userId, dto);
     return {

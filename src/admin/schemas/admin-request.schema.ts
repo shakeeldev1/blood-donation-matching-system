@@ -21,10 +21,18 @@ export class AdminRequest extends Document {
   @Prop({ required: true, min: 1 })
   quantity!: number;
 
-  @Prop({ required: true, enum: ['Emergency', 'Urgent', 'Normal'], default: 'Normal' })
+  @Prop({
+    required: true,
+    enum: ['Emergency', 'Urgent', 'Normal'],
+    default: 'Normal',
+  })
   urgency!: string;
 
-  @Prop({ required: true, enum: ['Pending', 'Approved', 'Rejected'], default: 'Pending' })
+  @Prop({
+    required: true,
+    enum: ['Pending', 'Approved', 'Rejected'],
+    default: 'Pending',
+  })
   status!: string;
 }
 
