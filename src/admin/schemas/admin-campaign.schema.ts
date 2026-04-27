@@ -10,6 +10,9 @@ export class AdminCampaign extends Document {
   description!: string;
 
   @Prop({ default: '' })
+  location!: string;
+
+  @Prop({ default: '' })
   startDate!: string;
 
   @Prop({ default: '' })

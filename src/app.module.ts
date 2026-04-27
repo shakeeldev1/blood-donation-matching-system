@@ -11,6 +11,7 @@ import { AdminModule } from './admin/admin.module';
 import { ChatModule } from './chat/chat.module';
 import { PaymentModule } from './payment/payment.module';
 import { ChatbotModule } from './chatbot/chatbot.module';
+import { ContactModule } from './contact/contact.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { ChatbotModule } from './chatbot/chatbot.module';
     ChatModule,
     PaymentModule,
     ChatbotModule,
+    ContactModule,
   ],
   controllers: [AppController],
   providers: [AppService],

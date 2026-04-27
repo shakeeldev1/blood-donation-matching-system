@@ -25,6 +25,7 @@ import {
   AdminCampaignSchema,
 } from './schemas/admin-campaign.schema';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { CampaignPublicController } from './campaign-public.controller';
 
 @Module({
   imports: [
@@ -38,7 +39,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
       { name: AdminCampaign.name, schema: AdminCampaignSchema },
     ]),
   ],
-  controllers: [AdminController],
+  controllers: [AdminController, CampaignPublicController],
   providers: [AdminService, RolesGuard],
 })
 export class AdminModule {}

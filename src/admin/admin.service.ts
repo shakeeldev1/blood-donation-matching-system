@@ -67,6 +67,7 @@ export class AdminService implements OnModuleInit {
     id: string;
     name: string;
     description: string;
+    location: string;
     startDate: string;
     endDate: string;
     status: string;
@@ -90,6 +91,20 @@ export class AdminService implements OnModuleInit {
 
   async onModuleInit() {
     await this.refreshCaches();
+  }
+
+  private mapCampaign(campaign: any) {
+    return {
+      id: String(campaign._id),
+      name: campaign.name,
+      description: campaign.description ?? '',
+      location: campaign.location ?? '',
+      startDate: campaign.startDate ?? '',
+      endDate: campaign.endDate ?? '',
+      status: campaign.status,
+      participantsCount: Number(campaign.participantsCount ?? 0),
+      targetCount: Number(campaign.targetCount ?? 0),
+    };
   }
 
   private async refreshCaches() {
@@ -153,16 +168,9 @@ export class AdminService implements OnModuleInit {
         new Date(item.updatedAt ?? item.createdAt).toISOString(),
     }));
 
-    this.campaignsCache = campaigns.map((campaign: any) => ({
-      id: String(campaign._id),
-      name: campaign.name,
-      description: campaign.description ?? '',
-      startDate: campaign.startDate ?? '',
-      endDate: campaign.endDate ?? '',
-      status: campaign.status,
-      participantsCount: Number(campaign.participantsCount ?? 0),
-      targetCount: Number(campaign.targetCount ?? 0),
-    }));
+    this.campaignsCache = campaigns.map((campaign: any) =>
+      this.mapCampaign(campaign),
+    );
   }
 
   private paginate<T>(items: T[], page = 1, limit = 10) {
@@ -703,6 +711,102 @@ export class AdminService implements OnModuleInit {
       limit: currentLimit,
     } = this.paginate(this.campaignsCache, page, limit);
     return { campaigns: rows, total, page: currentPage, limit: currentLimit };
+  }
+
+  async getCampaignById(id: string) {
+    const campaign = await this.campaignModel.findById(id).lean();
+    if (!campaign) {
+      return null;
+    }
+
+    return this.mapCampaign(campaign);
+  }
+
+  async joinCampaign(id: string) {
+    const campaign = await this.campaignModel
+      .findByIdAndUpdate(id, { $inc: { participantsCount: 1 } }, { new: true })
+      .lean();
+
+    if (!campaign) {
+      return null;
+    }
+
+    await this.refreshCaches();
+    return this.mapCampaign(campaign);
+  }
+
+  async createCampaign(payload: {
+    name: string;
+    description?: string;
+    location?: string;
+    startDate?: string;
+    endDate?: string;
+    status?: 'Active' | 'Completed' | 'Upcoming';
+    targetCount?: number;
+  }) {
+    const created = await this.campaignModel.create({
+      name: payload.name,
+      description: payload.description ?? '',
+      location: payload.location ?? '',
+      startDate: payload.startDate ?? '',
+      endDate: payload.endDate ?? payload.startDate ?? '',
+      status: payload.status ?? 'Upcoming',
+      targetCount: payload.targetCount ?? 0,
+      participantsCount: 0,
+    });
+
+    await this.refreshCaches();
+    return created;
+  }
+
+  async updateCampaign(
+    id: string,
+    payload: {
+      name?: string;
+      description?: string;
+      location?: string;
+      startDate?: string;
+      endDate?: string;
+      status?: 'Active' | 'Completed' | 'Upcoming';
+      targetCount?: number;
+      participantsCount?: number;
+    },
+  ) {
+    const updated = await this.campaignModel
+      .findByIdAndUpdate(
+        id,
+        {
+          ...(payload.name !== undefined ? { name: payload.name } : {}),
+          ...(payload.description !== undefined
+            ? { description: payload.description }
+            : {}),
+          ...(payload.location !== undefined
+            ? { location: payload.location }
+            : {}),
+          ...(payload.startDate !== undefined
+            ? { startDate: payload.startDate }
+            : {}),
+          ...(payload.endDate !== undefined ? { endDate: payload.endDate } : {}),
+          ...(payload.status !== undefined ? { status: payload.status } : {}),
+          ...(payload.targetCount !== undefined
+            ? { targetCount: payload.targetCount }
+            : {}),
+          ...(payload.participantsCount !== undefined
+            ? { participantsCount: payload.participantsCount }
+            : {}),
+        },
+        { new: true },
+      )
+      .lean();
+
+    await this.refreshCaches();
+    return updated;
+  }
+
+  async deleteCampaign(id: string) {
+    const result = await this.campaignModel.deleteOne({ _id: id });
+    await this.refreshCaches();
+    return { deleted: result.deletedCount > 0 };
   }
 
   async getInventory() {

@@ -265,6 +265,55 @@ export class AdminController {
     return this.adminService.getCampaigns(parseInt(page), parseInt(limit));
   }
 
+  @Post('campaigns')
+  async createCampaign(
+    @Body()
+    body: {
+      name: string;
+      description?: string;
+      location?: string;
+      startDate?: string;
+      endDate?: string;
+      status?: 'Active' | 'Completed' | 'Upcoming';
+      targetCount?: number;
+    },
+  ) {
+    return this.adminService.createCampaign(body);
+  }
+
+  @Patch('campaigns/:id')
+  async updateCampaign(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      name?: string;
+      description?: string;
+      location?: string;
+      startDate?: string;
+      endDate?: string;
+      status?: 'Active' | 'Completed' | 'Upcoming';
+      targetCount?: number;
+      participantsCount?: number;
+    },
+  ) {
+    const campaign = await this.adminService.updateCampaign(id, body);
+    if (!campaign) {
+      throw new NotFoundException('Campaign not found');
+    }
+
+    return campaign;
+  }
+
+  @Delete('campaigns/:id')
+  async deleteCampaign(@Param('id') id: string) {
+    const result = await this.adminService.deleteCampaign(id);
+    if (!result.deleted) {
+      throw new NotFoundException('Campaign not found');
+    }
+
+    return result;
+  }
+
   @Get('inventory')
   async getInventory() {
     return this.adminService.getInventory();
