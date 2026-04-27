@@ -25,6 +25,11 @@ type ChatbotReply = {
   confidence: number;
 };
 
+type SessionTurn = {
+  role: 'user' | 'assistant';
+  text: string;
+};
+
 type ChatbotRequester = {
   sub: string;
   email: string;
@@ -36,6 +41,13 @@ type ChatbotRequester = {
 export class ChatbotService {
   private readonly logger = new Logger(ChatbotService.name);
   private openAiDisabledUntil = 0;
+  private readonly responseCacheTtlMs = 120_000;
+  private readonly maxSessionTurns = 6;
+  private readonly responseCache = new Map<
+    string,
+    { expiresAt: number; reply: ChatbotReply }
+  >();
+  private readonly sessionContext = new Map<string, SessionTurn[]>();
 
   constructor(
     private readonly configService: ConfigService,
@@ -67,6 +79,74 @@ export class ChatbotService {
     return Number.isFinite(configuredValue) && configuredValue > 0
       ? configuredValue
       : 60_000;
+  }
+
+  private normalizeMessage(text: string) {
+    return text.trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+
+  private buildCacheKey(
+    normalizedMessage: string,
+    requester: ChatbotRequester,
+  ): string {
+    const role = requester?.role?.toLowerCase() ?? 'guest';
+    return `${role}::${normalizedMessage}`;
+  }
+
+  private getCachedReply(cacheKey: string): ChatbotReply | null {
+    const cached = this.responseCache.get(cacheKey);
+    if (!cached) {
+      return null;
+    }
+
+    if (Date.now() > cached.expiresAt) {
+      this.responseCache.delete(cacheKey);
+      return null;
+    }
+
+    return cached.reply;
+  }
+
+  private setCachedReply(cacheKey: string, reply: ChatbotReply) {
+    this.responseCache.set(cacheKey, {
+      expiresAt: Date.now() + this.responseCacheTtlMs,
+      reply,
+    });
+  }
+
+  private rememberConversation(
+    sessionId: string | undefined,
+    userMessage: string,
+    assistantReply: string,
+  ) {
+    if (!sessionId) {
+      return;
+    }
+
+    const previous = this.sessionContext.get(sessionId) ?? [];
+    const next = [
+      ...previous,
+      { role: 'user' as const, text: userMessage },
+      { role: 'assistant' as const, text: assistantReply },
+    ];
+
+    const maxTurns = this.maxSessionTurns * 2;
+    this.sessionContext.set(sessionId, next.slice(-maxTurns));
+  }
+
+  private buildSessionContextText(sessionId?: string): string {
+    if (!sessionId) {
+      return '';
+    }
+
+    const turns = this.sessionContext.get(sessionId);
+    if (!turns || turns.length === 0) {
+      return '';
+    }
+
+    return turns
+      .map((turn) => `${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.text}`)
+      .join('\n');
   }
 
   private isOpenAiConfigured() {
@@ -242,7 +322,10 @@ export class ChatbotService {
     return '';
   }
 
-  private async askOpenAi(message: string): Promise<ChatbotReply | null> {
+  private async askOpenAi(
+    message: string,
+    sessionId?: string,
+  ): Promise<ChatbotReply | null> {
     if (!this.isOpenAiConfigured()) {
       return null;
     }
@@ -253,6 +336,7 @@ export class ChatbotService {
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12000);
+    const sessionContext = this.buildSessionContextText(sessionId);
 
     try {
       const response = await fetch('https://api.openai.com/v1/responses', {
@@ -271,10 +355,23 @@ export class ChatbotService {
               content: [
                 {
                   type: 'input_text',
-                  text: 'You are the Blood Donation System assistant. Answer general questions clearly and professionally. Do not invent live database numbers. If a user asks for live counts or operational metrics, state that live data is handled by system database tools.',
+                  text: 'You are the Blood Donation System assistant. Answer clearly and professionally. Be concise first, then give practical steps. Do not invent live database numbers. If asked for live metrics, explain that live data is handled by system database tools.',
                 },
               ],
             },
+            ...(sessionContext
+              ? [
+                  {
+                    role: 'system',
+                    content: [
+                      {
+                        type: 'input_text',
+                        text: `Conversation context:\n${sessionContext}`,
+                      },
+                    ],
+                  },
+                ]
+              : []),
             {
               role: 'user',
               content: [
@@ -394,7 +491,72 @@ export class ChatbotService {
       };
     }
 
+    if (/\b(hello|hi|hey|good morning|good evening)\b/.test(text)) {
+      return {
+        reply:
+          'Hello. I can help with eligibility, donation intervals, blood request flow, campaign support, and platform guidance. Ask your question and I will respond quickly.',
+        intent: 'greeting',
+        source: 'server-rules',
+        confidence: 0.95,
+      };
+    }
+
     return null;
+  }
+
+  private async askMlService(dto: AskChatbotDto): Promise<ChatbotReply | null> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    try {
+      const response = await fetch(`${this.getMlServiceUrl()}/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message: dto.message, sessionId: dto.sessionId }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        this.logger.warn(`ML service returned ${response.status}`);
+        return null;
+      }
+
+      const payload = (await response.json()) as MlServiceChatResponse;
+      const reply = payload.reply?.trim();
+
+      if (!reply) {
+        return null;
+      }
+
+      return {
+        reply,
+        intent: payload.intent ?? null,
+        source: 'ml-service',
+        confidence: payload.confidence ?? 0.5,
+      };
+    } catch (error) {
+      this.logger.warn(
+        `ML service unavailable, continuing fallback chain: ${
+          error instanceof Error ? error.message : 'unknown error'
+        }`,
+      );
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private finalizeReply(
+    dto: AskChatbotDto,
+    message: string,
+    cacheKey: string,
+    reply: ChatbotReply,
+  ): ChatbotReply {
+    this.setCachedReply(cacheKey, reply);
+    this.rememberConversation(dto.sessionId, message, reply.reply);
+    return reply;
   }
 
   async ask(
@@ -406,61 +568,36 @@ export class ChatbotService {
       return this.buildFallback('');
     }
 
-    const databaseReply = await this.buildDatabaseReply(message, requester);
-    if (databaseReply) {
-      return databaseReply;
+    const normalizedMessage = this.normalizeMessage(message);
+    const cacheKey = this.buildCacheKey(normalizedMessage, requester);
+    const cachedReply = this.getCachedReply(cacheKey);
+    if (cachedReply) {
+      return cachedReply;
     }
 
-    const openAiReply = await this.askOpenAi(message);
-    if (openAiReply) {
-      return openAiReply;
+    const databaseReply = await this.buildDatabaseReply(message, requester);
+    if (databaseReply) {
+      return this.finalizeReply(dto, message, cacheKey, databaseReply);
     }
 
     const serverRuleReply = this.buildRuleBasedReply(message);
     if (serverRuleReply) {
-      return serverRuleReply;
+      return this.finalizeReply(dto, message, cacheKey, serverRuleReply);
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-
-    try {
-      const response = await fetch(`${this.getMlServiceUrl()}/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ message, sessionId: dto.sessionId }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        this.logger.warn(`ML service returned ${response.status}`);
-        return this.buildFallback(message);
-      }
-
-      const payload = (await response.json()) as MlServiceChatResponse;
-      const reply = payload.reply?.trim();
-
-      if (!reply) {
-        return this.buildFallback(message);
-      }
-
-      return {
-        reply,
-        intent: payload.intent ?? null,
-        source: 'ml-service',
-        confidence: payload.confidence ?? 0.5,
-      };
-    } catch (error) {
-      this.logger.warn(
-        `ML service unavailable, using fallback: ${
-          error instanceof Error ? error.message : 'unknown error'
-        }`,
-      );
-      return this.buildFallback(message);
-    } finally {
-      clearTimeout(timeout);
+    const mlServiceReply = await this.askMlService({
+      ...dto,
+      message,
+    });
+    if (mlServiceReply) {
+      return this.finalizeReply(dto, message, cacheKey, mlServiceReply);
     }
+
+    const openAiReply = await this.askOpenAi(message, dto.sessionId);
+    if (openAiReply) {
+      return this.finalizeReply(dto, message, cacheKey, openAiReply);
+    }
+
+    return this.finalizeReply(dto, message, cacheKey, this.buildFallback(message));
   }
 }
