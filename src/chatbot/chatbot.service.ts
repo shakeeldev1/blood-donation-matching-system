@@ -14,7 +14,8 @@ type ChatbotReply = {
     | 'fallback'
     | 'server-rules'
     | 'database-tools'
-    | 'openai';
+    | 'openai'
+    | 'gemini';
   confidence: number;
 };
 
@@ -53,8 +54,24 @@ export class ChatbotService {
     return this.configService.get<string>('OPENAI_API_KEY') ?? '';
   }
 
+  private getGeminiApiKey() {
+    return this.configService.get<string>('GEMINI_API_KEY') ?? '';
+  }
+
   private getOpenAiModel() {
     return this.configService.get<string>('OPENAI_MODEL') ?? 'gpt-4.1-mini';
+  }
+
+  private getGeminiModel() {
+    return this.configService.get<string>('GEMINI_MODEL') ?? 'gemini-2.0-flash';
+  }
+
+  private getGeminiCandidateModels(): string[] {
+    const configured = this.getGeminiModel().trim();
+    const defaults = ['gemini-2.0-flash', 'gemini-2.5-flash'];
+    return [configured, ...defaults].filter((value, index, arr) => {
+      return Boolean(value) && arr.indexOf(value) === index;
+    });
   }
 
   private getOpenAiRateLimitCooldownMs() {
@@ -85,6 +102,11 @@ export class ChatbotService {
       return null;
     }
 
+    if (cached.reply.source === 'fallback') {
+      this.responseCache.delete(cacheKey);
+      return null;
+    }
+
     if (Date.now() > cached.expiresAt) {
       this.responseCache.delete(cacheKey);
       return null;
@@ -94,6 +116,10 @@ export class ChatbotService {
   }
 
   private setCachedReply(cacheKey: string, reply: ChatbotReply) {
+    if (reply.source === 'fallback') {
+      return;
+    }
+
     this.responseCache.set(cacheKey, {
       expiresAt: Date.now() + this.responseCacheTtlMs,
       reply,
@@ -139,15 +165,53 @@ export class ChatbotService {
     return Boolean(this.getOpenAiApiKey().trim());
   }
 
+  private isGeminiConfigured() {
+    return Boolean(this.getGeminiApiKey().trim());
+  }
+
   private extractBloodGroup(text: string): string | null {
-    const match = text.match(/\b(a\+|a-|b\+|b-|ab\+|ab-|o\+|o-)\b/i);
+    const match = text.match(
+      /(?<![A-Za-z0-9])(a\+|a-|b\+|b-|ab\+|ab-|o\+|o-)(?![A-Za-z0-9])/i,
+    );
     return match ? match[1].toUpperCase() : null;
   }
 
   private isBloodGroupUserQuery(text: string): boolean {
-    return /\b(a\+|a-|b\+|b-|ab\+|ab-|o\+|o-)\b\s*(group)?\s*(user|users|donor|donors)\b/i.test(
-      text,
-    );
+    const hasBloodGroup = Boolean(this.extractBloodGroup(text));
+    const asksForDonors = /\b(user|users|donor|donors|available)\b/i.test(text);
+    return hasBloodGroup && asksForDonors;
+  }
+
+  private getCompatibilityReply(bloodGroup: string): string | null {
+    const normalized = bloodGroup.toUpperCase();
+    const receiveFrom: Record<string, string[]> = {
+      'O-': ['O-'],
+      'O+': ['O+', 'O-'],
+      'A-': ['A-', 'O-'],
+      'A+': ['A+', 'A-', 'O+', 'O-'],
+      'B-': ['B-', 'O-'],
+      'B+': ['B+', 'B-', 'O+', 'O-'],
+      'AB-': ['AB-', 'A-', 'B-', 'O-'],
+      'AB+': ['AB+', 'AB-', 'A+', 'A-', 'B+', 'B-', 'O+', 'O-'],
+    };
+    const donateTo: Record<string, string[]> = {
+      'O-': ['O-', 'O+', 'A-', 'A+', 'B-', 'B+', 'AB-', 'AB+'],
+      'O+': ['O+', 'A+', 'B+', 'AB+'],
+      'A-': ['A-', 'A+', 'AB-', 'AB+'],
+      'A+': ['A+', 'AB+'],
+      'B-': ['B-', 'B+', 'AB-', 'AB+'],
+      'B+': ['B+', 'AB+'],
+      'AB-': ['AB-', 'AB+'],
+      'AB+': ['AB+'],
+    };
+
+    if (!receiveFrom[normalized] || !donateTo[normalized]) {
+      return null;
+    }
+
+    return `For blood group ${normalized}, you can typically receive from: ${receiveFrom[
+      normalized
+    ].join(', ')}. You can donate to: ${donateTo[normalized].join(', ')}.`;
   }
 
   private async buildDatabaseReply(message: string): Promise<ChatbotReply | null> {
@@ -212,6 +276,30 @@ export class ChatbotService {
       return {
         reply: `For blood group ${bloodGroup}, there are ${totalByGroup} registered donors and ${availableByGroup} currently available donors.`,
         intent: 'blood_group_user_count',
+        source: 'database-tools',
+        confidence: 0.99,
+      };
+    }
+
+    if (
+      Boolean(this.extractBloodGroup(text)) &&
+      /\b(donor|donors|available)\b/.test(text)
+    ) {
+      const bloodGroup = this.extractBloodGroup(text);
+      if (!bloodGroup) {
+        return null;
+      }
+
+      const totalByGroup = await this.donorModel
+        .countDocuments({ bloodGroup })
+        .exec();
+      const availableByGroup = await this.donorModel
+        .countDocuments({ bloodGroup, availability: true })
+        .exec();
+
+      return {
+        reply: `For ${bloodGroup}, there are ${totalByGroup} registered donors and ${availableByGroup} currently available donors.`,
+        intent: 'blood_group_donor_count',
         source: 'database-tools',
         confidence: 0.99,
       };
@@ -340,6 +428,7 @@ export class ChatbotService {
       });
 
       if (!response.ok) {
+        const errorBody = await response.text();
         if (response.status === 429) {
           this.openAiDisabledUntil = Date.now() + this.getOpenAiRateLimitCooldownMs();
           this.logger.log(
@@ -348,7 +437,9 @@ export class ChatbotService {
           return null;
         }
 
-        this.logger.warn(`OpenAI service returned ${response.status}`);
+        this.logger.warn(
+          `OpenAI service returned ${response.status}. Body: ${errorBody.slice(0, 400)}`,
+        );
         return null;
       }
 
@@ -369,6 +460,118 @@ export class ChatbotService {
       this.openAiDisabledUntil = Date.now() + 30_000;
       this.logger.warn(
         `OpenAI unavailable, cooling down for 30000ms and continuing with fallback chain: ${
+          error instanceof Error ? error.message : 'unknown error'
+        }`,
+      );
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private extractGeminiText(payload: unknown): string {
+    if (!payload || typeof payload !== 'object') {
+      return '';
+    }
+
+    const maybePayload = payload as {
+      candidates?: Array<{
+        content?: { parts?: Array<{ text?: string }> };
+      }>;
+    };
+
+    if (!Array.isArray(maybePayload.candidates)) {
+      return '';
+    }
+
+    for (const candidate of maybePayload.candidates) {
+      const parts = candidate?.content?.parts;
+      if (!Array.isArray(parts)) {
+        continue;
+      }
+
+      for (const part of parts) {
+        if (typeof part?.text === 'string' && part.text.trim()) {
+          return part.text.trim();
+        }
+      }
+    }
+
+    return '';
+  }
+
+  private async askGemini(
+    message: string,
+    sessionId?: string,
+  ): Promise<ChatbotReply | null> {
+    if (!this.isGeminiConfigured()) {
+      return null;
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+    const sessionContext = this.buildSessionContextText(sessionId);
+    const candidateModels = this.getGeminiCandidateModels();
+
+    try {
+      for (const model of candidateModels) {
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${this.getGeminiApiKey()}`;
+
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  {
+                    text: `You are the Blood Donation System assistant. Answer clearly and professionally. Be concise first, then give practical steps. Do not invent live database numbers. If asked for live metrics, explain that live data is handled by system database tools.\n${
+                      sessionContext
+                        ? `Conversation context:\n${sessionContext}\n`
+                        : ''
+                    }User question: ${message}`,
+                  },
+                ],
+              },
+            ],
+            generationConfig: {
+              temperature: 0.2,
+              maxOutputTokens: 500,
+            },
+          }),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          const errorBody = await response.text();
+          this.logger.warn(
+            `Gemini model ${model} returned ${response.status}. Body: ${errorBody.slice(0, 400)}`,
+          );
+          continue;
+        }
+
+        const payload = (await response.json()) as unknown;
+        const reply = this.extractGeminiText(payload);
+
+        if (!reply) {
+          continue;
+        }
+
+        return {
+          reply,
+          intent: null,
+          source: 'gemini',
+          confidence: 0.9,
+        };
+      }
+
+      return null;
+    } catch (error) {
+      this.logger.warn(
+        `Gemini unavailable, continuing fallback chain: ${
           error instanceof Error ? error.message : 'unknown error'
         }`,
       );
@@ -423,6 +626,39 @@ export class ChatbotService {
         reply:
           'No blood group is universally more important than others, but O- is often crucial in emergencies because it can be used for many recipients. AB plasma is also widely compatible for plasma transfusion. In practice, the most important group is the one currently needed by a patient.',
         intent: 'blood_group_importance',
+        source: 'server-rules',
+        confidence: 0.95,
+      };
+    }
+
+    if (
+      /\b(compatible|compatibility|match|use|receive|donate to|can i use)\b.*\b(blood|group|type)\b|\bblood group.*\b(can i use|compatible|match)\b/.test(
+        text,
+      )
+    ) {
+      const bloodGroup = this.extractBloodGroup(text);
+      if (bloodGroup) {
+        const reply = this.getCompatibilityReply(bloodGroup);
+        if (reply) {
+          return {
+            reply,
+            intent: 'blood_group_compatibility',
+            source: 'server-rules',
+            confidence: 0.95,
+          };
+        }
+      }
+    }
+
+    if (
+      /\b(how|can|could|may|ways?|steps?)\b.*\b(donate|donation)\b|\bhow i can donate\b|\bhow can i donate\b/.test(
+        text,
+      )
+    ) {
+      return {
+        reply:
+          'To donate blood: 1) complete donor profile and eligibility details, 2) choose appointment location/time, 3) pass basic health screening, 4) donate, and 5) rest and hydrate. If you want, I can guide you step-by-step based on your profile.',
+        intent: 'donation_process',
         source: 'server-rules',
         confidence: 0.95,
       };
@@ -512,6 +748,11 @@ export class ChatbotService {
     const openAiReply = await this.askOpenAi(message, dto.sessionId);
     if (openAiReply) {
       return this.finalizeReply(dto, message, cacheKey, openAiReply);
+    }
+
+    const geminiReply = await this.askGemini(message, dto.sessionId);
+    if (geminiReply) {
+      return this.finalizeReply(dto, message, cacheKey, geminiReply);
     }
 
     const serverRuleReply = this.buildRuleBasedReply(message);
