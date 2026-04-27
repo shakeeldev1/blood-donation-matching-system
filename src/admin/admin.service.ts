@@ -8,6 +8,8 @@ import { AdminComplaint } from './schemas/admin-complaint.schema';
 import { AdminRecipient } from './schemas/admin-recipient.schema';
 import { AdminInventory } from './schemas/admin-inventory.schema';
 import { AdminCampaign } from './schemas/admin-campaign.schema';
+import { AdminReview } from './schemas/admin-review.schema';
+import { AdminExpert } from './schemas/admin-expert.schema';
 
 type RequestStatus = 'Pending' | 'Approved' | 'Rejected';
 type ComplaintStatus = 'Pending' | 'Resolved' | 'Rejected';
@@ -87,6 +89,10 @@ export class AdminService implements OnModuleInit {
     private inventoryModel: Model<AdminInventory>,
     @InjectModel(AdminCampaign.name)
     private campaignModel: Model<AdminCampaign>,
+    @InjectModel(AdminReview.name)
+    private reviewModel: Model<AdminReview>,
+    @InjectModel(AdminExpert.name)
+    private expertModel: Model<AdminExpert>,
   ) {}
 
   async onModuleInit() {
@@ -735,6 +741,242 @@ export class AdminService implements OnModuleInit {
     return this.mapCampaign(campaign);
   }
 
+  async submitCampaignDonationIntent(
+    campaignId: string,
+    payload: {
+      name: string;
+      email?: string;
+      phone: string;
+      bloodGroup: string;
+      preferredDate: string;
+      notes?: string;
+    },
+  ) {
+    const campaign = await this.campaignModel.findById(campaignId).lean();
+    if (!campaign) {
+      return null;
+    }
+
+    const complaint = await this.complaintModel.create({
+      from: payload.name,
+      subject: `Campaign Donation Intent - ${campaign.name}`,
+      category: 'Campaign Donation',
+      priority: 'Medium',
+      status: 'Pending',
+      description: [
+        `Campaign: ${campaign.name}`,
+        `Blood Group: ${payload.bloodGroup}`,
+        `Preferred Date: ${payload.preferredDate}`,
+        `Notes: ${payload.notes ?? 'N/A'}`,
+      ].join('\n'),
+      email: payload.email,
+      phone: payload.phone,
+    });
+
+    const updatedCampaign = await this.campaignModel
+      .findByIdAndUpdate(
+        campaignId,
+        { $inc: { participantsCount: 1 } },
+        { new: true },
+      )
+      .lean();
+
+    await this.refreshCaches();
+    return {
+      complaintId: String((complaint as any)._id),
+      campaign: updatedCampaign ? this.mapCampaign(updatedCampaign) : null,
+    };
+  }
+
+  async getPublicReviews(limit = 12) {
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? limit : 12;
+    const reviews = await this.reviewModel
+      .find({ status: 'Approved' })
+      .sort({ createdAt: -1 })
+      .limit(safeLimit)
+      .lean();
+
+    return {
+      reviews: reviews.map((review: any) => ({
+        id: String(review._id),
+        text: review.text,
+        name: review.name,
+        location: review.location ?? '',
+        type: review.type ?? 'Donor',
+        rating: Number(review.rating ?? 5),
+        status: review.status,
+        createdAt: review.createdAt,
+      })),
+    };
+  }
+
+  async submitReview(payload: {
+    name: string;
+    email?: string;
+    rating: number;
+    text: string;
+    location?: string;
+    type?: string;
+  }) {
+    const created = await this.reviewModel.create({
+      name: payload.name,
+      email: payload.email ?? '',
+      rating: Math.min(5, Math.max(1, Number(payload.rating || 5))),
+      text: payload.text,
+      location: payload.location ?? '',
+      type: payload.type ?? 'Donor',
+      status: 'Pending',
+    });
+
+    return {
+      success: true,
+      reviewId: String((created as any)._id),
+      message: 'Review submitted and waiting for admin approval.',
+    };
+  }
+
+  async getAdminReviews(page = 1, limit = 10) {
+    const safePage = Number.isFinite(page) && page > 0 ? page : 1;
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? limit : 10;
+
+    const [reviews, total] = await Promise.all([
+      this.reviewModel
+        .find()
+        .sort({ createdAt: -1 })
+        .skip((safePage - 1) * safeLimit)
+        .limit(safeLimit)
+        .lean(),
+      this.reviewModel.countDocuments(),
+    ]);
+
+    return {
+      reviews: reviews.map((review: any) => ({
+        id: String(review._id),
+        name: review.name,
+        email: review.email,
+        rating: review.rating,
+        text: review.text,
+        location: review.location,
+        type: review.type,
+        status: review.status,
+        createdAt: review.createdAt,
+      })),
+      total,
+      page: safePage,
+      limit: safeLimit,
+    };
+  }
+
+  async updateReviewStatus(
+    id: string,
+    payload: { status: 'Pending' | 'Approved' | 'Rejected' },
+  ) {
+    return this.reviewModel
+      .findByIdAndUpdate(id, { status: payload.status }, { new: true })
+      .lean();
+  }
+
+  async deleteReview(id: string) {
+    const result = await this.reviewModel.deleteOne({ _id: id });
+    return { deleted: result.deletedCount > 0 };
+  }
+
+  async getPublicExperts() {
+    const experts = await this.expertModel
+      .find({ status: 'Active' })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return {
+      experts: experts.map((expert: any) => ({
+        id: String(expert._id),
+        name: expert.name,
+        title: expert.title,
+        description: expert.description ?? '',
+        image: expert.image ?? '',
+        linkedin: expert.linkedin ?? '',
+        twitter: expert.twitter ?? '',
+        email: expert.email ?? '',
+        status: expert.status,
+      })),
+    };
+  }
+
+  async getAdminExperts(page = 1, limit = 10) {
+    const safePage = Number.isFinite(page) && page > 0 ? page : 1;
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? limit : 10;
+
+    const [experts, total] = await Promise.all([
+      this.expertModel
+        .find()
+        .sort({ createdAt: -1 })
+        .skip((safePage - 1) * safeLimit)
+        .limit(safeLimit)
+        .lean(),
+      this.expertModel.countDocuments(),
+    ]);
+
+    return {
+      experts: experts.map((expert: any) => ({
+        id: String(expert._id),
+        name: expert.name,
+        title: expert.title,
+        description: expert.description,
+        image: expert.image,
+        linkedin: expert.linkedin,
+        twitter: expert.twitter,
+        email: expert.email,
+        status: expert.status,
+      })),
+      total,
+      page: safePage,
+      limit: safeLimit,
+    };
+  }
+
+  async createExpert(payload: {
+    name: string;
+    title: string;
+    description?: string;
+    image?: string;
+    linkedin?: string;
+    twitter?: string;
+    email?: string;
+    status?: 'Active' | 'Inactive';
+  }) {
+    return this.expertModel.create({
+      name: payload.name,
+      title: payload.title,
+      description: payload.description ?? '',
+      image: payload.image ?? '',
+      linkedin: payload.linkedin ?? '',
+      twitter: payload.twitter ?? '',
+      email: payload.email ?? '',
+      status: payload.status ?? 'Active',
+    });
+  }
+
+  async updateExpert(
+    id: string,
+    payload: {
+      name?: string;
+      title?: string;
+      description?: string;
+      image?: string;
+      linkedin?: string;
+      twitter?: string;
+      email?: string;
+      status?: 'Active' | 'Inactive';
+    },
+  ) {
+    return this.expertModel.findByIdAndUpdate(id, payload, { new: true }).lean();
+  }
+
+  async deleteExpert(id: string) {
+    const result = await this.expertModel.deleteOne({ _id: id });
+    return { deleted: result.deletedCount > 0 };
+  }
+
   async createCampaign(payload: {
     name: string;
     description?: string;
@@ -876,6 +1118,66 @@ export class AdminService implements OnModuleInit {
   }
 
   async deleteComplaint(id: string) {
+    const result = await this.complaintModel.deleteOne({ _id: id });
+    await this.refreshCaches();
+    return { deleted: result.deletedCount > 0 };
+  }
+
+  async getCampaignDonationRequests(page = 1, limit = 10) {
+    const safePage = Number.isFinite(page) && page > 0 ? page : 1;
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? limit : 10;
+
+    const [rows, total] = await Promise.all([
+      this.complaintModel
+        .find({ category: 'Campaign Donation' })
+        .sort({ createdAt: -1 })
+        .skip((safePage - 1) * safeLimit)
+        .limit(safeLimit)
+        .lean(),
+      this.complaintModel.countDocuments({ category: 'Campaign Donation' }),
+    ]);
+
+    return {
+      requests: rows.map((item: any) => ({
+        id: String(item._id),
+        from: item.from,
+        subject: item.subject,
+        status:
+          item.status === 'Resolved'
+            ? 'Accepted'
+            : item.status === 'Rejected'
+              ? 'Rejected'
+              : 'Pending',
+        description: item.description ?? '',
+        email: item.email,
+        phone: item.phone,
+        createdAt: item.createdAt,
+      })),
+      total,
+      page: safePage,
+      limit: safeLimit,
+    };
+  }
+
+  async updateCampaignDonationRequestStatus(
+    id: string,
+    payload: { status: 'Pending' | 'Accepted' | 'Rejected' },
+  ) {
+    const mappedStatus =
+      payload.status === 'Accepted'
+        ? 'Resolved'
+        : payload.status === 'Rejected'
+          ? 'Rejected'
+          : 'Pending';
+
+    const updated = await this.complaintModel
+      .findByIdAndUpdate(id, { status: mappedStatus }, { new: true })
+      .lean();
+    await this.refreshCaches();
+    return updated;
+  }
+
+  async deleteCampaignDonationRequest(id: string) {
     const result = await this.complaintModel.deleteOne({ _id: id });
     await this.refreshCaches();
     return { deleted: result.deletedCount > 0 };

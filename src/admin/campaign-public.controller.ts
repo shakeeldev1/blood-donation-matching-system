@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Get,
   NotFoundException,
@@ -30,13 +31,24 @@ export class CampaignPublicController {
     return { campaign };
   }
 
-  @Post(':id/join')
-  async joinCampaign(@Param('id') id: string) {
-    const campaign = await this.adminService.joinCampaign(id);
-    if (!campaign) {
+  @Post(':id/donate-intent')
+  async submitDonateIntent(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      name: string;
+      email?: string;
+      phone: string;
+      bloodGroup: string;
+      preferredDate: string;
+      notes?: string;
+    },
+  ) {
+    const result = await this.adminService.submitCampaignDonationIntent(id, body);
+    if (!result) {
       throw new NotFoundException('Campaign not found');
     }
 
-    return { success: true, campaign };
+    return { success: true, ...result };
   }
 }

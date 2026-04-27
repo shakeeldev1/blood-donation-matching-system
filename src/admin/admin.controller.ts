@@ -314,6 +314,95 @@ export class AdminController {
     return result;
   }
 
+  @Get('reviews')
+  async getReviews(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+  ) {
+    return this.adminService.getAdminReviews(parseInt(page), parseInt(limit));
+  }
+
+  @Patch('reviews/:id/status')
+  async updateReviewStatus(
+    @Param('id') id: string,
+    @Body() body: { status: 'Pending' | 'Approved' | 'Rejected' },
+  ) {
+    const review = await this.adminService.updateReviewStatus(id, body);
+    if (!review) {
+      throw new NotFoundException('Review not found');
+    }
+
+    return review;
+  }
+
+  @Delete('reviews/:id')
+  async deleteReview(@Param('id') id: string) {
+    const result = await this.adminService.deleteReview(id);
+    if (!result.deleted) {
+      throw new NotFoundException('Review not found');
+    }
+
+    return result;
+  }
+
+  @Get('experts')
+  async getExperts(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+  ) {
+    return this.adminService.getAdminExperts(parseInt(page), parseInt(limit));
+  }
+
+  @Post('experts')
+  async createExpert(
+    @Body()
+    body: {
+      name: string;
+      title: string;
+      description?: string;
+      image?: string;
+      linkedin?: string;
+      twitter?: string;
+      email?: string;
+      status?: 'Active' | 'Inactive';
+    },
+  ) {
+    return this.adminService.createExpert(body);
+  }
+
+  @Patch('experts/:id')
+  async updateExpert(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      name?: string;
+      title?: string;
+      description?: string;
+      image?: string;
+      linkedin?: string;
+      twitter?: string;
+      email?: string;
+      status?: 'Active' | 'Inactive';
+    },
+  ) {
+    const expert = await this.adminService.updateExpert(id, body);
+    if (!expert) {
+      throw new NotFoundException('Expert not found');
+    }
+
+    return expert;
+  }
+
+  @Delete('experts/:id')
+  async deleteExpert(@Param('id') id: string) {
+    const result = await this.adminService.deleteExpert(id);
+    if (!result.deleted) {
+      throw new NotFoundException('Expert not found');
+    }
+
+    return result;
+  }
+
   @Get('inventory')
   async getInventory() {
     return this.adminService.getInventory();
@@ -354,6 +443,43 @@ export class AdminController {
     const result = await this.adminService.deleteComplaint(id);
     if (!result.deleted) {
       throw new NotFoundException('Complaint not found');
+    }
+
+    return result;
+  }
+
+  @Get('campaign-donation-requests')
+  async getCampaignDonationRequests(
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '10',
+  ) {
+    return this.adminService.getCampaignDonationRequests(
+      parseInt(page),
+      parseInt(limit),
+    );
+  }
+
+  @Patch('campaign-donation-requests/:id/status')
+  async updateCampaignDonationRequestStatus(
+    @Param('id') id: string,
+    @Body() body: { status: 'Pending' | 'Accepted' | 'Rejected' },
+  ) {
+    const request = await this.adminService.updateCampaignDonationRequestStatus(
+      id,
+      body,
+    );
+    if (!request) {
+      throw new NotFoundException('Campaign donation request not found');
+    }
+
+    return request;
+  }
+
+  @Delete('campaign-donation-requests/:id')
+  async deleteCampaignDonationRequest(@Param('id') id: string) {
+    const result = await this.adminService.deleteCampaignDonationRequest(id);
+    if (!result.deleted) {
+      throw new NotFoundException('Campaign donation request not found');
     }
 
     return result;

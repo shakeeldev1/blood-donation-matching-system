@@ -24,8 +24,12 @@ import {
   AdminCampaign,
   AdminCampaignSchema,
 } from './schemas/admin-campaign.schema';
+import { AdminReview, AdminReviewSchema } from './schemas/admin-review.schema';
+import { AdminExpert, AdminExpertSchema } from './schemas/admin-expert.schema';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { CampaignPublicController } from './campaign-public.controller';
+import { ReviewsPublicController } from './reviews-public.controller';
+import { ExpertsPublicController } from './experts-public.controller';
 
 @Module({
   imports: [
@@ -37,9 +41,16 @@ import { CampaignPublicController } from './campaign-public.controller';
       { name: AdminRecipient.name, schema: AdminRecipientSchema },
       { name: AdminInventory.name, schema: AdminInventorySchema },
       { name: AdminCampaign.name, schema: AdminCampaignSchema },
+      { name: AdminReview.name, schema: AdminReviewSchema },
+      { name: AdminExpert.name, schema: AdminExpertSchema },
     ]),
   ],
-  controllers: [AdminController, CampaignPublicController],
+  controllers: [
+    AdminController,
+    CampaignPublicController,
+    ReviewsPublicController,
+    ExpertsPublicController,
+  ],
   providers: [AdminService, RolesGuard],
 })
 export class AdminModule {}
