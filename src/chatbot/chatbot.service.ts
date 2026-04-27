@@ -6,13 +6,6 @@ import { AskChatbotDto } from './dto/ask-chatbot.dto';
 import { Donor } from '../donor/schemas/donor.schema';
 import { BloodRequest } from '../donor/schemas/blood-request.schema';
 
-type MlServiceChatResponse = {
-  intent?: string | null;
-  reply?: string;
-  source?: string;
-  confidence?: number;
-};
-
 type ChatbotReply = {
   reply: string;
   intent: string | null;
@@ -55,13 +48,6 @@ export class ChatbotService {
     @InjectModel(BloodRequest.name)
     private readonly bloodRequestModel: Model<BloodRequest>,
   ) {}
-
-  private getMlServiceUrl() {
-    return (
-      this.configService.get<string>('ML_SERVICE_URL') ??
-      'http://127.0.0.1:5001'
-    );
-  }
 
   private getOpenAiApiKey() {
     return this.configService.get<string>('OPENAI_API_KEY') ?? '';
@@ -164,41 +150,8 @@ export class ChatbotService {
     );
   }
 
-  private isSensitiveDatabaseQuestion(text: string): boolean {
-    return (
-      /\b(how many|total|number of)\b.*\b(donor|donors)\b/.test(text) ||
-      /\b(available|availability)\b.*\b(donor|donors)\b/.test(text) ||
-      /\b(urgent|critical|high)\b.*\b(request|requests)\b/.test(text) ||
-      this.isBloodGroupUserQuery(text)
-    );
-  }
-
-  private canAccessSensitiveMetrics(requester: ChatbotRequester): boolean {
-    if (!requester?.role) {
-      return false;
-    }
-
-    return requester.role.toLowerCase() === 'admin';
-  }
-
-  private async buildDatabaseReply(
-    message: string,
-    requester: ChatbotRequester,
-  ): Promise<ChatbotReply | null> {
+  private async buildDatabaseReply(message: string): Promise<ChatbotReply | null> {
     const text = message.toLowerCase();
-
-    if (
-      this.isSensitiveDatabaseQuestion(text) &&
-      !this.canAccessSensitiveMetrics(requester)
-    ) {
-      return {
-        reply:
-          'Live operational metrics are restricted. Please sign in with an admin account to access donor and urgent request statistics.',
-        intent: 'restricted_metrics_access',
-        source: 'server-rules',
-        confidence: 1,
-      };
-    }
 
     if (/\b(how many|total|number of)\b.*\b(donor|donors)\b/.test(text)) {
       const totalDonors = await this.donorModel.countDocuments({}).exec();
@@ -448,6 +401,34 @@ export class ChatbotService {
     const text = message.toLowerCase();
 
     if (
+      /\b(hello|helo|hi|hey|good morning|good afternoon|good evening|how are you|how r you)\b/.test(
+        text,
+      )
+    ) {
+      return {
+        reply:
+          'Hello. I am doing well and ready to help. You can ask about donor eligibility, blood request flow, donation interval, blood group compatibility, or campaign support.',
+        intent: 'greeting',
+        source: 'server-rules',
+        confidence: 0.96,
+      };
+    }
+
+    if (
+      /\b(important|rare|critical|universal|best)\b.*\b(blood|group|type)\b|\bwhich blood group is important\b/.test(
+        text,
+      )
+    ) {
+      return {
+        reply:
+          'No blood group is universally more important than others, but O- is often crucial in emergencies because it can be used for many recipients. AB plasma is also widely compatible for plasma transfusion. In practice, the most important group is the one currently needed by a patient.',
+        intent: 'blood_group_importance',
+        source: 'server-rules',
+        confidence: 0.95,
+      };
+    }
+
+    if (
       /\b(expensive|costly|price|cost)\b.*\b(blood|group|type)\b|\bwhich blood group is expensive\b/.test(
         text,
       )
@@ -491,61 +472,7 @@ export class ChatbotService {
       };
     }
 
-    if (/\b(hello|hi|hey|good morning|good evening)\b/.test(text)) {
-      return {
-        reply:
-          'Hello. I can help with eligibility, donation intervals, blood request flow, campaign support, and platform guidance. Ask your question and I will respond quickly.',
-        intent: 'greeting',
-        source: 'server-rules',
-        confidence: 0.95,
-      };
-    }
-
     return null;
-  }
-
-  private async askMlService(dto: AskChatbotDto): Promise<ChatbotReply | null> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-
-    try {
-      const response = await fetch(`${this.getMlServiceUrl()}/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ message: dto.message, sessionId: dto.sessionId }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        this.logger.warn(`ML service returned ${response.status}`);
-        return null;
-      }
-
-      const payload = (await response.json()) as MlServiceChatResponse;
-      const reply = payload.reply?.trim();
-
-      if (!reply) {
-        return null;
-      }
-
-      return {
-        reply,
-        intent: payload.intent ?? null,
-        source: 'ml-service',
-        confidence: payload.confidence ?? 0.5,
-      };
-    } catch (error) {
-      this.logger.warn(
-        `ML service unavailable, continuing fallback chain: ${
-          error instanceof Error ? error.message : 'unknown error'
-        }`,
-      );
-      return null;
-    } finally {
-      clearTimeout(timeout);
-    }
   }
 
   private finalizeReply(
@@ -570,32 +497,26 @@ export class ChatbotService {
 
     const normalizedMessage = this.normalizeMessage(message);
     const cacheKey = this.buildCacheKey(normalizedMessage, requester);
+
+    // Always compute database answers live so metrics stay current.
+    const databaseReply = await this.buildDatabaseReply(message);
+    if (databaseReply) {
+      return this.finalizeReply(dto, message, cacheKey, databaseReply);
+    }
+
     const cachedReply = this.getCachedReply(cacheKey);
     if (cachedReply) {
       return cachedReply;
     }
 
-    const databaseReply = await this.buildDatabaseReply(message, requester);
-    if (databaseReply) {
-      return this.finalizeReply(dto, message, cacheKey, databaseReply);
+    const openAiReply = await this.askOpenAi(message, dto.sessionId);
+    if (openAiReply) {
+      return this.finalizeReply(dto, message, cacheKey, openAiReply);
     }
 
     const serverRuleReply = this.buildRuleBasedReply(message);
     if (serverRuleReply) {
       return this.finalizeReply(dto, message, cacheKey, serverRuleReply);
-    }
-
-    const mlServiceReply = await this.askMlService({
-      ...dto,
-      message,
-    });
-    if (mlServiceReply) {
-      return this.finalizeReply(dto, message, cacheKey, mlServiceReply);
-    }
-
-    const openAiReply = await this.askOpenAi(message, dto.sessionId);
-    if (openAiReply) {
-      return this.finalizeReply(dto, message, cacheKey, openAiReply);
     }
 
     return this.finalizeReply(dto, message, cacheKey, this.buildFallback(message));
