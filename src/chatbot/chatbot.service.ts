@@ -10,7 +10,6 @@ type ChatbotReply = {
   reply: string;
   intent: string | null;
   source:
-    | 'ml-service'
     | 'fallback'
     | 'server-rules'
     | 'database-tools'
