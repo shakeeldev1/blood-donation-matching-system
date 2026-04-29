@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import Stripe from 'stripe';
@@ -17,6 +17,15 @@ export class PaymentService {
       throw new Error('STRIPE_SECRET_KEY environment variable is not defined');
     }
     this.stripe = new Stripe(stripeKey);
+  }
+
+  verifyWebhookEvent(payload: Buffer, signature: string): unknown {
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      throw new Error('STRIPE_WEBHOOK_SECRET is not configured');
+    }
+
+    return this.stripe.webhooks.constructEvent(payload, signature, webhookSecret);
   }
 
   /**
@@ -112,8 +121,11 @@ export class PaymentService {
   /**
    * Get payment by ID
    */
-  async getPaymentById(paymentId: string) {
-    return this.paymentModel.findById(paymentId);
+  async getPaymentById(paymentId: string, userId: string) {
+    return this.paymentModel.findOne({
+      _id: paymentId,
+      userId: new Types.ObjectId(userId),
+    });
   }
 
   /**
@@ -212,12 +224,16 @@ export class PaymentService {
   /**
    * Create refund
    */
-  async createRefund(paymentId: string, amount?: number) {
+  async createRefund(paymentId: string, userId: string, amount?: number) {
     try {
       const payment = await this.paymentModel.findById(paymentId);
 
       if (!payment || payment.status !== 'succeeded') {
         throw new Error('Payment not found or not succeeded');
+      }
+
+      if (payment.userId.toString() !== userId) {
+        throw new ForbiddenException('You cannot refund another user payment');
       }
 
       const refund = await this.stripe.refunds.create({

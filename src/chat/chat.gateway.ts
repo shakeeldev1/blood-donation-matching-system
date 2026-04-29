@@ -58,10 +58,20 @@ export class ChatGateway
         return;
       }
 
-      // Verify JWT token
+      // Verify JWT token using the same access secret used by auth strategy.
       let decoded: any;
       try {
-        decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET!);
+        const accessSecret =
+          process.env.JWT_SECRET ?? process.env.ACCESS_TOKEN_SECRET;
+
+        if (!accessSecret) {
+          this.logger.error('Missing JWT secret for chat gateway');
+          client.emit('error', { message: 'Server auth configuration error' });
+          client.disconnect();
+          return;
+        }
+
+        decoded = jwt.verify(token, accessSecret);
       } catch (error) {
         this.logger.warn(`Connection rejected - invalid token: ${client.id}`);
         client.emit('error', { message: 'Invalid or expired token' });

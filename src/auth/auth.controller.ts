@@ -8,6 +8,12 @@ import { RefreshTokenDto } from './dto/refreshToken.dto';
 import { Get, UseGuards, Req } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 
+interface AuthRequest {
+  user: {
+    sub: string;
+  };
+}
+
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
@@ -42,8 +48,9 @@ export class AuthController {
     return this.authService.refreshTokens(dto.userId, dto.refreshToken);
   }
 
+  @UseGuards(AuthGuard('jwt'))
   @Post('logout')
-  logout(@Body('userId') userId: string) {
-    return this.authService.logout(userId);
+  logout(@Req() req: AuthRequest) {
+    return this.authService.logout(req.user.sub);
   }
 }
